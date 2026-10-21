@@ -110,7 +110,7 @@ function showView(name) {
   }
   document.getElementById("view-install").hidden = name !== "install";
   document.getElementById("view-config").hidden = name !== "config";
-  if (name === "config") configView.refresh();
+  if (name === "config") configView.refresh(true);
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

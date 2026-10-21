@@ -70,19 +70,32 @@ func TestLoadRejectsBadProfiles(t *testing.T) {
 func TestConfigFiles(t *testing.T) {
 	profiles, _ := Builtin()
 	p := profiles[0]
-	if p.Service != "openxplay-relay.service" || len(p.Config) != 2 || p.Config[0].Path != "/var/lib/openxplay/settings.json" {
+	if p.Service != "openxplay-relay.service" || len(p.Config) != 3 || p.Config[0].Path != "/var/lib/openxplay/settings.json" {
 		t.Fatalf("UFI003 config %q %+v", p.Service, p.Config)
 	}
 	base := func() Profile {
 		return Profile{ID: "x", Family: "f", Name: Text{"en": "X", "zh-CN": "X"}, Service: "relay.service",
 			USB:    []USBMatch{{Mode: ModeADB, VendorID: "18d1", ProductID: "d001"}},
 			Layers: []Layer{{ID: "top", Name: Text{"en": "T", "zh-CN": "T"}, Transport: ModeADB}},
-			Config: []ConfigFile{{ID: "c", Path: "/etc/x.json", Format: "json", RestartService: true, Name: Text{"en": "C", "zh-CN": "C"}}}}
+			Config: []ConfigFile{{ID: "c", Category: "user", Path: "/etc/x.json", Format: "json", RestartService: true, Name: Text{"en": "C", "zh-CN": "C"}}}}
 	}
 	if err := base().Validate(); err != nil {
 		t.Fatalf("valid profile rejected: %v", err)
 	}
 	bad := map[string]func(*Profile){
+		"private root on user": func(p *Profile) { p.Config[0].PrivatePaths = []string{"/private"} },
+		"relative private root": func(p *Profile) {
+			p.Config[0].Category = "privacy"
+			p.Config[0].Format = "public-name"
+			p.Config[0].PrivatePaths = []string{"private"}
+		},
+		"unsupported private glob": func(p *Profile) {
+			p.Config[0].Category = "privacy"
+			p.Config[0].Format = "public-name"
+			p.Config[0].PrivatePaths = []string{"/private/??"}
+		},
+		"missing category": func(p *Profile) { p.Config[0].Category = "" },
+		"unknown category": func(p *Profile) { p.Config[0].Category = "secret" },
 		"relative path":    func(p *Profile) { p.Config[0].Path = "etc/x.json" },
 		"unclean path":     func(p *Profile) { p.Config[0].Path = "/etc/../etc/x.json" },
 		"unknown format":   func(p *Profile) { p.Config[0].Format = "yaml" },
@@ -98,4 +111,20 @@ func TestConfigFiles(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+}
+
+func TestProfileDeclaresAllHTTPSPrivatePaths(t *testing.T) {
+	profiles, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range profiles[0].Config {
+		if f.Category == "privacy" {
+			if len(f.PrivatePaths) != 2 {
+				t.Fatal("private relay storage and temporary paths must be profile data")
+			}
+			return
+		}
+	}
+	t.Fatal("missing privacy entry")
 }

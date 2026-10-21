@@ -9,7 +9,7 @@ import { ZH, t, setLang } from "../assets/i18n.js";
 
 const read = (name) => readFileSync(new URL("../assets/" + name, import.meta.url), "utf8");
 const html = read("index.html");
-const scripts = ["app.js", "devices.js", "config.js", "configlogic.js"].map(read).join("\n");
+const scripts = ["app.js", "devices.js", "config.js", "configlogic.js", "privacy.js"].map(read).join("\n");
 
 // Every English string the page can show: data-t attributes, t("...") calls and the mode labels.
 function usedStrings() {

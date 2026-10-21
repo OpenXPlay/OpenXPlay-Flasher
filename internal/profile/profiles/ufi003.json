@@ -61,7 +61,8 @@
         "zh-CN": "中继设置"
       },
       "format": "json",
-      "restartService": true
+      "restartService": true,
+      "category": "user"
     },
     {
       "id": "host-profile",
@@ -71,7 +72,23 @@
         "zh-CN": "主机配置（网卡与硬件）"
       },
       "format": "json",
-      "restartService": true
+      "restartService": true,
+      "category": "system"
+    },
+    {
+      "id": "public-name",
+      "category": "privacy",
+      "path": "/var/lib/openxplay/public-name.json",
+      "format": "public-name",
+      "restartService": false,
+      "name": {
+        "en": "Trusted HTTPS",
+        "zh-CN": "可信 HTTPS"
+      },
+      "privatePaths": [
+        "/var/lib/openxplay/public-name",
+        "/var/lib/openxplay/public-name.tmp-*"
+      ]
     }
   ]
 }

@@ -416,3 +416,13 @@ main { flex: 1; padding: 16px 28px; }
 .foot { padding-left: 16px; padding-right: 16px; }
   .steps li { padding: 8px 4px; font-size: 12px; }
 }
+
+.config-categories { margin-bottom: 16px; }
+.config-categories [aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.system-warning { margin-bottom: 16px; }
+.privacy { max-width: 680px; }
+.privacy h3, .privacy p { margin: 0; }
+.privacy > input, .privacy > select {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text); background: var(--surface); font: inherit;
+}

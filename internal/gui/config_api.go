@@ -7,9 +7,12 @@ package gui
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"path"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -34,6 +37,7 @@ var configErrors = []struct {
 	{app.ErrUnconfirmed, "unconfirmed"},
 	{app.ErrNoConfigProfile, "no-config"},
 	{config.ErrProtected, "protected"},
+	{config.ErrPrivacy, "privacy"},
 	{config.ErrNotRegular, "not-file"},
 	{config.ErrTooLarge, "too-large"},
 	{config.ErrBinary, "binary"},
@@ -43,6 +47,11 @@ var configErrors = []struct {
 }
 
 func writeConfigError(w http.ResponseWriter, err error) {
+	var invalid *config.PrivateValidationError
+	if errors.As(err, &invalid) {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"code": "private-invalid", "error": invalid.Error(), "errors": invalid.Fields})
+		return
+	}
 	for _, e := range configErrors {
 		if errors.Is(err, e.err) {
 			writeError(w, http.StatusConflict, e.code, err.Error())
@@ -53,6 +62,7 @@ func writeConfigError(w http.ResponseWriter, err error) {
 }
 
 func configRoutes(mux *http.ServeMux, d Deps) {
+	privacyRoutes(mux, d)
 	op := func(r *http.Request) (context.Context, context.CancelFunc) {
 		return context.WithTimeout(r.Context(), configTimeout)
 	}
@@ -158,6 +168,12 @@ func configRoutes(mux *http.ServeMux, d Deps) {
 		if !readJSON(w, r, &in) {
 			return
 		}
+		ctx, cancel := op(r)
+		defer cancel()
+		if err := d.Service.ConfigCheckRaw(ctx, in.Path); err != nil {
+			writeConfigError(w, err)
+			return
+		}
 		saved, err := d.Native.SaveFile(path.Base(in.Path), []byte(in.Content))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "export", err.Error())
@@ -184,6 +200,78 @@ func configRoutes(mux *http.ServeMux, d Deps) {
 			writeConfigError(w, config.ErrBinary)
 			return
 		}
+		// A trusted-HTTPS import must use the private endpoint, never return its token.
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(data, &obj) == nil && (obj["token"] != nil || obj["agreeLetsEncryptTerms"] != nil) {
+			writeConfigError(w, config.ErrPrivacy)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]string{"name": name, "content": string(data)})
 	})
+}
+
+// readPrivateJSON intentionally never returns JSON decoder diagnostics or submitted keys.
+func readPrivateJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	mt, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";")
+	if strings.TrimSpace(mt) != "application/json" {
+		writeError(w, 415, "bad_request", "send application/json")
+		return false
+	}
+	dec := json.NewDecoder(io.LimitReader(r.Body, 64<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		writeError(w, 400, "bad_request", "invalid private request")
+		return false
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		writeError(w, 400, "bad_request", "invalid private request")
+		return false
+	}
+	return true
+}
+
+func privacyRoutes(mux *http.ServeMux, d Deps) {
+	for _, action := range []string{"read", "write", "import", "remove", "backups", "restore"} {
+		mux.HandleFunc("POST /api/config/privacy/"+action, func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				ID string `json:"id"`
+				config.PublicNameUpdate
+				Content string `json:"content"`
+				Backup  string `json:"backup"`
+				Native  bool   `json:"native"`
+			}
+			if !readPrivateJSON(w, r, &in) {
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), configTimeout)
+			defer cancel()
+			data := []byte(in.Content)
+			if action == "import" && in.Native {
+				name, b, err := d.Native.OpenFile()
+				if err != nil {
+					writeConfigError(w, config.ErrPrivateOperation)
+					return
+				}
+				if name == "" {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				data = b
+			}
+			v, backups, err := d.Service.ConfigPrivacy(ctx, in.ID, action, in.PublicNameUpdate, data, in.Backup)
+			if err != nil {
+				writeConfigError(w, err)
+				return
+			}
+			if action == "backups" {
+				if backups == nil {
+					backups = []config.Backup{}
+				}
+				writeJSON(w, 200, backups)
+				return
+			}
+			writeJSON(w, 200, v)
+		})
+	}
 }

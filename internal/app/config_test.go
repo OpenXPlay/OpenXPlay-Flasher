@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/config"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 )
@@ -23,6 +24,10 @@ type cannedDevice struct {
 }
 
 func (d *cannedDevice) Shell(_ context.Context, cmd string) (adb.Result, error) {
+	p := cmd[strings.LastIndex(cmd, " '")+2 : len(cmd)-1]
+	if p != d.path {
+		return adb.Result{Stdout: []byte("missing\n" + p + "\n")}, nil
+	}
 	out := "file\n" + d.path + "\n644\nroot:root\n" + "13\n"
 	return adb.Result{Stdout: []byte(out)}, nil
 }
@@ -71,7 +76,7 @@ func TestConfigTargetNeedsOneLinuxDevice(t *testing.T) {
 	}
 	s.SetADB(&fakeConnector{})
 	target, err := s.ConfigTarget()
-	if err != nil || target.Profile != "ufi003" || target.Service != "openxplay-relay.service" || len(target.Files) != 2 {
+	if err != nil || target.Profile != "ufi003" || target.Service != "openxplay-relay.service" || len(target.Files) != 3 {
 		t.Fatalf("ConfigTarget = %+v, %v", target, err)
 	}
 	cases := map[string]struct {
@@ -120,5 +125,21 @@ func TestConfigReadUsesTheDongle(t *testing.T) {
 	}
 	if _, err := s.ConfigRead(context.Background(), "/var/lib/openxplay/mfi/identity.pk8"); err == nil || !strings.Contains(err.Error(), "protected") {
 		t.Fatalf("protected read: %v", err)
+	}
+}
+
+func TestPrivacyKeepsSpecificTargetErrors(t *testing.T) {
+	for _, c := range []struct {
+		devices []device.Candidate
+		want    error
+	}{
+		{nil, ErrNoDevice}, {[]device.Candidate{ufi003ADB, ufi003ADB}, ErrSeveralDevices},
+	} {
+		s := serviceWith(t, c.devices...)
+		s.SetADB(&fakeConnector{})
+		_, _, err := s.ConfigPrivacy(context.Background(), "public-name", "read", config.PublicNameUpdate{}, nil, "")
+		if !errors.Is(err, c.want) {
+			t.Fatalf("privacy target error = %v, want %v", err, c.want)
+		}
 	}
 }
