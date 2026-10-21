@@ -29,6 +29,20 @@ func TestParseInstanceID(t *testing.T) {
 	}
 }
 
+func TestInstanceSerial(t *testing.T) {
+	cases := map[string]string{
+		`USB\VID_18D1&PID_D001\0123456789`:            "0123456789",
+		`USB\VID_18D1&PID_D001&MI_01\7&2F3A1B&0&0001`: "",
+		`USB\VID_05C6&PID_9008\5&1C2D&0&2`:            "",
+		`USB\ROOT_HUB30`:                              "",
+	}
+	for id, want := range cases {
+		if got := instanceSerial(id); got != want {
+			t.Errorf("instanceSerial(%q) = %q, want %q", id, got, want)
+		}
+	}
+}
+
 func TestParseClassAndLocation(t *testing.T) {
 	c, ok := parseClass([]string{`USB\Class_ff&SubClass_42&Prot_01`, `USB\Class_ff&SubClass_42`, `USB\Class_ff`})
 	if !ok || c != (Interface{Class: 0xff, SubClass: 0x42, Protocol: 0x01}) {
@@ -63,9 +77,9 @@ func TestDevicesFromNodes(t *testing.T) {
 	got := devicesFromNodes(nodes)
 	want := []DeviceInfo{
 		{VendorID: 0x18d1, ProductID: 0xd001, Bus: 0, Path: []int{2, 1}, Address: 1,
-			Interfaces: []Interface{{0xe0, 0x01, 0x03}, {0xff, 0x42, 0x01}}},
+			Interfaces: []Interface{{0xe0, 0x01, 0x03}, {0xff, 0x42, 0x01}}, Serial: "0123456789"},
 		{VendorID: 0x18d1, ProductID: 0xd00d, Bus: 0, Path: []int{3}, Address: 3,
-			Interfaces: []Interface{{0xff, 0x42, 0x03}}},
+			Interfaces: []Interface{{0xff, 0x42, 0x03}}, Serial: "a191abc8"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("devicesFromNodes:\n got %+v\nwant %+v", got, want)

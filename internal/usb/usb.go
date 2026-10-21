@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-20
 
 // Package usb describes USB devices on the host bus. Listing reads descriptors only: it never opens,
-// claims or writes to a device. Protocol clients (adb, fastboot, EDL) build on later interfaces.
+// claims or writes to a device. Protocol clients (adb, fastboot) open one interface with OpenBulk.
 package usb
 
 import (
@@ -27,6 +27,9 @@ type DeviceInfo struct {
 	Address    int         `json:"address"`
 	Path       []int       `json:"path"`
 	Interfaces []Interface `json:"interfaces"`
+	// Serial is the serial number when listing gets it without opening the device (Windows reads
+	// it from the device instance ID); empty otherwise.
+	Serial string `json:"serial,omitempty"`
 }
 
 // ID returns the device's VID:PID in the usual lower-case hex form, e.g. "18d1:d001".

@@ -47,6 +47,16 @@ func parseInstanceID(id string) (vendor, product uint16, iface int, ok bool) {
 	return uint16(v), uint16(p), iface, true
 }
 
+// instanceSerial returns the serial number in a device node's instance ID, or "" when Windows
+// generated that part (it then contains '&', as for interface nodes and devices without a serial).
+func instanceSerial(id string) string {
+	parts := strings.Split(id, `\`)
+	if len(parts) != 3 || parts[2] == "" || strings.Contains(parts[2], "&") {
+		return ""
+	}
+	return parts[2]
+}
+
 // parseClass returns the class triple among a node's compatible IDs. Windows builds them from the
 // interface descriptor for an interface node, and for a device with a single interface.
 func parseClass(ids []string) (Interface, bool) {
@@ -104,6 +114,7 @@ func devicesFromNodes(nodes []winNode) []DeviceInfo {
 		}
 		if iface < 0 {
 			d.Address = int(n.Address)
+			d.Serial = instanceSerial(n.InstanceID)
 		}
 		if c, ok := parseClass(n.CompatibleIDs); ok && !slices.Contains(d.Interfaces, c) {
 			d.Interfaces = append(d.Interfaces, c)
