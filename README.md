@@ -23,7 +23,7 @@ Requirements: Go 1.26 or later; on macOS the Xcode command line tools and libusb
 
 ```bash
 make app        # macOS: dist/OpenXPlay Flasher.app
-make windows    # Windows exes in dist/ (cross-built, no cgo; USB access on Windows is not done yet)
+make windows    # Windows exes in dist/ (cross-built without cgo; lists USB devices through SetupAPI)
 make test       # Go, UI and cross-platform checks
 make dev        # run the app with the page read from internal/gui/assets
 make web        # serve the page to a browser on this computer, for UI work

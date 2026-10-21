@@ -27,8 +27,8 @@ type webNative struct{}
 
 func (webNative) OpenURL(string) error { return errors.New("not available in browser mode") }
 
-// SetTitle: the page sets the browser tab's title itself.
-func (webNative) SetTitle(string) {}
+// SetLang: the page titles the browser tab itself, and a browser has no app menu.
+func (webNative) SetLang(string) {}
 
 // ServeWeb serves the GUI to a browser on a loopback address until ctx ends, for UI work with the
 // browser's developer tools. It prints the address to open, which carries a one-time key.
@@ -44,7 +44,7 @@ func ServeWeb(ctx context.Context, addr string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	bus := usb.NewLibusbBus()
+	bus := usb.NewHostBus()
 	defer bus.Close()
 	hub := NewHub()
 	svc, err := app.NewForBus(bus, hub)

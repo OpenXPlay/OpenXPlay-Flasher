@@ -34,13 +34,23 @@ func (h *host) OpenURL(url string) error {
 	return h.app.Browser.OpenURL(url)
 }
 
-// SetTitle renames the main window; Wails does not follow the page's document.title.
-func (h *host) SetTitle(title string) {
+// SetLang applies the UI language to the native parts: the window title (Wails does not follow
+// the page's document.title) and, on macOS, the menu bar.
+func (h *host) SetLang(lang string) {
 	application.InvokeAsync(func() {
 		if w, ok := h.app.Window.GetByName("main"); ok {
-			w.SetTitle(title)
+			w.SetTitle(appTitle(lang))
+		}
+		if runtime.GOOS == "darwin" {
+			h.app.Menu.Set(macMenu(lang, h.openInBrowser))
 		}
 	})
+}
+
+func (h *host) openInBrowser(url string) {
+	if err := h.OpenURL(url); err != nil {
+		log.Println("openxplay-flasher: opening", url+":", err)
+	}
 }
 
 // Run starts the desktop app and returns when its window is closed.
@@ -49,7 +59,7 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	bus := usb.NewLibusbBus()
+	bus := usb.NewHostBus()
 	defer bus.Close()
 	hub := NewHub()
 	svc, err := app.NewForBus(bus, hub)
@@ -84,6 +94,10 @@ func Run() error {
 
 	if !webView2Check(h.app, lang) {
 		return nil
+	}
+
+	if runtime.GOOS == "darwin" {
+		h.app.Menu.Set(macMenu(lang, h.openInBrowser))
 	}
 
 	win := h.app.Window.NewWithOptions(application.WebviewWindowOptions{

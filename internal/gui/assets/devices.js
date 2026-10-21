@@ -10,8 +10,19 @@ const MODE_LABELS = {
   edl: "Emergency download (EDL 9008)",
 };
 
+// Unsupported devices get the bare transport: their system is unknown.
+const OTHER_MODE_LABELS = {
+  adb: "adb device",
+  fastboot: "fastboot device",
+  edl: "Qualcomm EDL device",
+};
+
 export function modeLabel(mode) {
   return MODE_LABELS[mode] || mode;
+}
+
+export function otherModeLabel(mode) {
+  return OTHER_MODE_LABELS[mode] || mode;
 }
 
 export function usbId(usb) {

@@ -14,7 +14,7 @@ const scripts = ["app.js", "devices.js"].map(read).join("\n");
 // Every English string the page can show: data-t attributes, t("...") calls and the mode labels.
 function usedStrings() {
   const out = new Set();
-  for (const m of html.matchAll(/data-t="([^"]+)"/g)) out.add(m[1]);
+  for (const m of html.matchAll(/data-ta?="([^"]+)"/g)) out.add(m[1]);
   for (const m of scripts.matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"/g)) out.add(JSON.parse('"' + m[1] + '"'));
   for (const m of read("devices.js").matchAll(/^\s+\w+: "([^"]+)",$/gm)) out.add(m[1]);
   for (const m of scripts.matchAll(/status\("\w+", "([^"]+)"(?:,\s*"([^"]+)")?/g)) {

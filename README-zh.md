@@ -18,7 +18,7 @@
 
 ```bash
 make app        # macOS：dist/OpenXPlay Flasher.app
-make windows    # 在 dist/ 中生成 Windows exe（交叉编译，不使用 cgo；Windows 上的 USB 访问尚未完成）
+make windows    # 在 dist/ 中生成 Windows exe（交叉编译，不使用 cgo；通过 SetupAPI 列出 USB 设备）
 make test       # Go、界面和跨平台检查
 make dev        # 运行应用，页面直接读取 internal/gui/assets
 make web        # 在本机浏览器中打开页面，便于开发界面

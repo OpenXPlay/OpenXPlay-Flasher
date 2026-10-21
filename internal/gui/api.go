@@ -30,8 +30,8 @@ var assets embed.FS
 // Native is what the page may ask of the program hosting it.
 type Native interface {
 	OpenURL(url string) error
-	// SetTitle renames the window, e.g. when the UI language changes.
-	SetTitle(title string)
+	// SetLang applies a new UI language to the native window title and menus.
+	SetLang(lang string)
 }
 
 // Deps are the parts the handler serves.
@@ -122,7 +122,7 @@ func Handler(d Deps) http.Handler {
 			writeError(w, http.StatusInternalServerError, "settings_write", err.Error())
 			return
 		}
-		d.Native.SetTitle(appTitle(UILang(in.Lang, d.SystemLang)))
+		d.Native.SetLang(UILang(in.Lang, d.SystemLang))
 		writeJSON(w, http.StatusOK, in)
 	})
 

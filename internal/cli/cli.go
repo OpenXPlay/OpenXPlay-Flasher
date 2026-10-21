@@ -69,7 +69,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	bus := usb.NewLibusbBus()
+	bus := usb.NewHostBus()
 	defer bus.Close()
 	svc, err := app.NewForBus(bus, printer{out: stdout, json: *asJSON})
 	if err != nil {

@@ -6,7 +6,7 @@
 // it runs the same in the app window, in a browser (openxplay-flasher web) and in tests.
 
 import { t, setLang, lang, translateStatic } from "./i18n.js";
-import { deviceView, modelView, modeLabel, usbId, usbPort } from "./devices.js";
+import { deviceView, modelView, modeLabel, otherModeLabel, usbId, usbPort } from "./devices.js";
 
 const boot = window.bootPrefs || { lang: "en", web: true };
 const state = { info: null, profiles: [], devices: null, rev: 0, offline: false, othersOpen: false };
@@ -93,8 +93,8 @@ function renderDevices() {
       : t("{n} other Android devices are connected and ignored.", { n: view.others.length });
     const details = el("details", { class: "others" }, [
       el("summary", { "data-focus": "others" }, summary),
-      el("p", {}, t("A supported device running its original firmware may be among them; it is recognised once its USB IDs are added to its profile.")),
-      el("ul", {}, view.others.map((c) => el("li", {}, usbId(c.usb) + " · " + t(modeLabel(c.mode)) + " · " + usbPort(c.usb)))),
+      el("p", {}, t("A supported model that is not recognised yet, for example one still on its original firmware, may be among them; it is recognised once its USB IDs are added.")),
+      el("ul", {}, view.others.map((c) => el("li", {}, usbId(c.usb) + " · " + t(otherModeLabel(c.mode)) + " · " + usbPort(c.usb)))),
     ]);
     details.open = state.othersOpen;
     details.addEventListener("toggle", () => { state.othersOpen = details.open; });
@@ -154,6 +154,23 @@ function openLink(url) {
   }
   api("open", { url }).catch((err) => console.error(err));
 }
+
+// WKWebView follows macOS's Keyboard navigation setting, off by default, under which Tab skips
+// buttons and links. The page moves focus itself so Tab reaches every control on every platform.
+function focusables() {
+  return [...document.querySelectorAll("button, a[href], summary, input, select, textarea, [tabindex]")]
+    .filter((e) => !e.disabled && e.tabIndex >= 0 && e.offsetParent !== null);
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+  const list = focusables();
+  if (!list.length) return;
+  const i = list.indexOf(document.activeElement);
+  const next = event.shiftKey ? (i <= 0 ? list.length - 1 : i - 1) : (i + 1) % list.length;
+  event.preventDefault();
+  list[next].focus();
+});
 
 document.addEventListener("click", (event) => {
   const langButton = event.target.closest("[data-lang]");

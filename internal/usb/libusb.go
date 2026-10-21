@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-20
 
-//go:build cgo
+//go:build cgo && !windows
 
 package usb
 
@@ -21,8 +21,8 @@ type LibusbBus struct {
 	ctx *gousb.Context
 }
 
-// NewLibusbBus opens a libusb context. Close releases it.
-func NewLibusbBus() *LibusbBus {
+// NewHostBus returns the bus of this computer, read through a new libusb context; Close releases it.
+func NewHostBus() Bus {
 	return &LibusbBus{ctx: gousb.NewContext()}
 }
 

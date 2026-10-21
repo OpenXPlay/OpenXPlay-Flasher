@@ -21,7 +21,7 @@ import (
 
 type fakeNative struct {
 	opened []string
-	title  string
+	lang   string
 }
 
 func (f *fakeNative) OpenURL(url string) error {
@@ -29,7 +29,7 @@ func (f *fakeNative) OpenURL(url string) error {
 	return nil
 }
 
-func (f *fakeNative) SetTitle(title string) { f.title = title }
+func (f *fakeNative) SetLang(lang string) { f.lang = lang }
 
 type fixture struct {
 	handler  http.Handler
@@ -104,12 +104,12 @@ func TestBootFollowsSystemThenSavedLanguage(t *testing.T) {
 	if body := f.do("GET", "/boot.js", "").Body.String(); !strings.Contains(body, `"lang":"en"`) {
 		t.Fatalf("boot.js after choosing English: %s", body)
 	}
-	if f.native.title != "OpenXPlay Flasher" {
-		t.Fatalf("window title %q after choosing English", f.native.title)
+	if f.native.lang != LangEnglish {
+		t.Fatalf("native language %q after choosing English", f.native.lang)
 	}
 	f.do("POST", "/api/settings", `{"lang":"zh-CN"}`)
-	if f.native.title != "OpenXPlay 刷机工具" {
-		t.Fatalf("window title %q after choosing Chinese", f.native.title)
+	if f.native.lang != LangChinese || appTitle(f.native.lang) != "OpenXPlay 刷机工具" {
+		t.Fatalf("native language %q after choosing Chinese", f.native.lang)
 	}
 	f.do("POST", "/api/settings", `{"lang":"en"}`)
 	if rec := f.do("POST", "/api/settings", `{"lang":"fr"}`); rec.Code != http.StatusBadRequest {
@@ -190,6 +190,23 @@ func TestHubIgnoresUnknownEvents(t *testing.T) {
 	defer cancel()
 	if s := hub.Wait(ctx, 0); s.Rev != 0 {
 		t.Fatalf("rev moved: %+v", s)
+	}
+}
+
+func TestNativeTextInBothLanguages(t *testing.T) {
+	for _, lang := range []string{LangEnglish, LangChinese} {
+		m := menuStrings(lang)
+		for name, v := range map[string]string{"About": m.About, "Quit": m.Quit, "Help": m.Help, "Website": m.Website, "Source": m.Source} {
+			if v == "" {
+				t.Errorf("%s menu %s is empty", lang, name)
+			}
+		}
+		if !canOpen(siteURL(lang)) {
+			t.Errorf("%s site URL %s is not openable", lang, siteURL(lang))
+		}
+	}
+	if menuStrings(LangChinese).Quit == menuStrings(LangEnglish).Quit {
+		t.Fatal("menu not translated")
 	}
 }
 

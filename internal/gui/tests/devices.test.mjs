@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deviceView, modelView, text, usbId, usbPort } from "../assets/devices.js";
+import { deviceView, modelView, modeLabel, otherModeLabel, text, usbId, usbPort } from "../assets/devices.js";
 
 const dongle = { mode: "adb", profiles: ["ufi003"], usb: { vendorId: 0x18d1, productId: 0xd001, bus: 0, path: [1, 1, 1] } };
 const phone = { mode: "adb", profiles: [], usb: { vendorId: 0x2717, productId: 0xff08, bus: 0, path: [1, 1, 4] } };
@@ -66,4 +66,10 @@ test("a shared USB ID leaves the model to be confirmed", () => {
 test("profile text falls back to English", () => {
   assert.equal(text({ en: "Relay" }, "zh-CN"), "Relay");
   assert.equal(text(undefined, "en"), "");
+});
+
+test("unsupported devices are not described as running Linux", () => {
+  assert.equal(modeLabel("adb"), "Linux running, adb on");
+  assert.equal(otherModeLabel("adb"), "adb device");
+  assert.equal(otherModeLabel("edl"), "Qualcomm EDL device");
 });
