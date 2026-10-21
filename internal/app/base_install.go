@@ -60,12 +60,23 @@ func (s *Service) extendBaseChoicesLocked(state *InstallState, p profile.Profile
 		for k := range state.Choices[i].Needs {
 			n := &state.Choices[i].Needs[k]
 			n.Artifacts = s.artifactNeedsLocked(p, n.Layer)
+			n.Offline = s.catalogState.Index == nil
+			if pkg, _ := stage.PackageSet(s.packages).ForLayer(n.Layer); pkg != nil {
+				if problem := s.catalogPackageProblemLocked(pkg); problem != nil {
+					n.Problem = problem
+					n.Ready = false
+					state.Choices[i].Ready = false
+				}
+			}
 		}
 	}
 	if p.Base == nil {
 		return
 	}
-	ids := []string{"stock", "base", "full-reinstall"}
+	ids := []string{"base", "full-reinstall"}
+	if s.baseIdentity != nil && (s.baseIdentity.Mode == profile.ModeStock || s.baseIdentity.Product == p.Base.Fastboot.StockProduct) {
+		ids = []string{"stock"}
+	}
 	if s.baseIdentity != nil && s.baseIdentity.Mode == profile.ModeFastboot || base.ResumeChoice(s.unfinished) != "" {
 		ids = append(ids, "repair")
 	}
@@ -108,7 +119,7 @@ func (s *Service) extendBaseChoicesLocked(state *InstallState, p profile.Profile
 		}
 		c.Ready = c.Problem == nil
 		for _, layer := range c.Layers {
-			n := stage.PackageNeed{Layer: layer, FileTypes: stage.PackageFileTypes(layer), Status: "missing", Artifacts: s.artifactNeedsLocked(p, layer)}
+			n := stage.PackageNeed{Layer: layer, FileTypes: stage.PackageFileTypes(layer), Status: "missing", Artifacts: s.artifactNeedsLocked(p, layer), Offline: s.catalogState.Index == nil}
 			if layer == "base" {
 				n.FileTypes = []string{".zip", ".img"}
 				ready := len(n.Artifacts) == 3
@@ -117,7 +128,7 @@ func (s *Service) extendBaseChoicesLocked(state *InstallState, p profile.Profile
 					size += a.Size
 					ready = ready && a.Verified && a.Error == nil
 				}
-				info := stage.PackageInfo{ID: p.Base.Release, Name: p.Base.Release, Layer: "base", Device: p.ID, Version: p.Base.Release, Size: size, Checked: ready}
+				info := stage.PackageInfo{ID: p.Base.Release, Name: p.Base.DisplayName(), Layer: "base", Device: p.ID, Version: p.Base.DisplayName(), Size: size, Checked: ready}
 				n.Package = &info
 				n.Ready = ready
 			} else {
@@ -128,6 +139,9 @@ func (s *Service) extendBaseChoicesLocked(state *InstallState, p profile.Profile
 					n.Package = &info
 					if m := pkg.Manifest(); m.Device != "" && m.Device != p.ID {
 						n.Problem = &stage.Problem{Code: "wrong-device", Detail: m.Device}
+					}
+					if n.Problem == nil {
+						n.Problem = s.catalogPackageProblemLocked(pkg)
 					}
 					n.Ready = n.Problem == nil
 				}
@@ -144,7 +158,7 @@ func (s *Service) extendBaseChoicesLocked(state *InstallState, p profile.Profile
 		state.Choices = append(state.Choices, c)
 	}
 	if s.baseIdentity != nil {
-		if s.baseIdentity.Mode == profile.ModeFastboot && (base.ResumeChoice(s.unfinished) != "" || s.baseIdentity.Product == p.Base.Fastboot.Product) {
+		if s.baseIdentity.Mode == profile.ModeFastboot && s.baseIdentity.Product != p.Base.Fastboot.StockProduct || base.ResumeChoice(s.unfinished) != "" {
 			state.Suggested = "repair"
 		} else if s.baseIdentity.Mode == profile.ModeStock || s.baseIdentity.Product == p.Base.Fastboot.StockProduct {
 			state.Suggested = "stock"
@@ -152,6 +166,8 @@ func (s *Service) extendBaseChoicesLocked(state *InstallState, p profile.Profile
 	}
 	for i := range state.Layers {
 		if state.Layers[i].Layer == "base" {
+			state.Layers[i].Name = profile.Text{"en": p.Base.DisplayName(), "zh-CN": p.Base.DisplayName()}
+			state.Layers[i].KernelRelease = p.Base.Linux.KernelRelease
 			id := "base"
 			if state.Suggested == "stock" || state.Suggested == "repair" {
 				id = state.Suggested
@@ -169,49 +185,78 @@ func (s *Service) extendBaseChoicesLocked(state *InstallState, p profile.Profile
 	}
 }
 func (s *Service) artifactNeedsLocked(p profile.Profile, layer string) []stage.ArtifactNeed {
-	var artifacts []catalog.Artifact
+	artifacts := []catalog.Artifact{}
+	version := ""
+	for _, picked := range s.picks {
+		if picked.Layer == layer && picked.Profile == p.ID && picked.Version != "" {
+			version = picked.Version
+			break
+		}
+	}
+	entry := s.catalogLayerLocked(p, layer, version)
+	if entry == nil && version != "" {
+		entry = s.catalogLayerLocked(p, layer, "")
+	}
 	if layer == "base" && p.Base != nil {
 		for _, role := range []string{"base-generic", "rootfs-zip", "boot"} {
 			pin := p.Base.Archives[role]
-			artifacts = append(artifacts, catalog.Artifact{Role: role, Name: pin.File, Size: pin.Size, SHA256: pin.SHA256})
+			a := catalog.Artifact{Role: role, Name: pin.File, Size: pin.Size, SHA256: pin.SHA256}
+			if entry != nil {
+				for _, ca := range entry.Artifacts {
+					if ca.Role == role && ca.Size == pin.Size && ca.SHA256 == pin.SHA256 {
+						a.URLs = slices.Clone(ca.URLs)
+					}
+				}
+			}
+			artifacts = append(artifacts, a)
 		}
-	} else if entry := s.catalogLayerLocked(p, layer, ""); entry != nil {
+	} else if entry != nil {
 		artifacts = entry.Artifacts
+	} else if s.catalogState.Index == nil {
+		if layer == "device" {
+			artifacts = []catalog.Artifact{{Role: "bundle", Name: "*.tar.gz"}}
+		}
+		if layer == "relay" {
+			artifacts = []catalog.Artifact{{Role: "deb", Name: "*.deb"}, {Role: "manifest", Name: "*.manifest.json"}}
+		}
 	}
 	out := []stage.ArtifactNeed{}
 	for _, a := range artifacts {
-		n, ok := s.artifacts[artifactKey(layer, a.Role)]
-		if !ok || n.SHA256 != a.SHA256 {
-			n = stage.ArtifactNeed{Role: a.Role, Name: a.Name, Size: a.Size, SHA256: a.SHA256, Source: "catalog", Total: a.Size}
+		n := stage.ArtifactNeed{Role: a.Role, Name: a.Name, Size: a.Size, SHA256: a.SHA256, Source: "catalog", Total: a.Size, Status: "waiting", URLs: slices.Clone(a.URLs)}
+		if picked, ok := s.picks[artifactKey(layer, a.Role)]; ok && picked.Profile == p.ID && (a.SHA256 == "" || a.Size == picked.Size && a.SHA256 == picked.SHA256) {
+			n.Name, n.Path, n.Size, n.SHA256, n.Total = picked.Name, picked.Path, picked.Size, picked.SHA256, picked.Size
+			n.Source = "selected"
+			if s.checkedFiles[picked.SHA256] {
+				n.Status, n.Done, n.Verified = "verified", picked.Size, true
+			}
+		}
+		page := ""
+		switch layer {
+		case "base":
+			if p.Base != nil {
+				page = p.Base.Source
+			}
+		case "device":
+			page = "https://github.com/OpenXPlay/OpenXPlay-Hardware/releases"
+		case "relay":
+			page = "https://github.com/OpenXPlay/OpenXPlay-Relay/releases"
+		}
+		if page != "" && !slices.Contains(n.URLs, page) {
+			n.URLs = append(n.URLs, page)
 		}
 		out = append(out, n)
 	}
-	if local, ok := s.artifacts[artifactKey(layer, "local")]; ok {
-		if pkg, _ := stage.PackageSet(s.packages).ForLayer(layer); pkg != nil && pkg.Info().SHA256 == local.SHA256 {
-			matched := false
-			for i := range out {
-				if out[i].SHA256 == local.SHA256 {
-					out[i] = local
-					matched = true
-				}
-			}
-			if !matched {
-				out = append(out, local)
-			}
-		}
-	}
-
 	return out
 }
 
 func (s *Service) baseFilesLocked(p profile.Profile) *base.Files {
-	provider := base.Provider{Cache: s.catalogCache, Layer: s.catalogLayerLocked(p, "base", p.Base.Release), Dir: s.cacheDir}
-	f := &base.Files{Dir: s.cacheDir, Profile: p, Provider: provider}
-	f.Progress = func(role, source string, progress catalog.Progress) {
-		pin := p.Base.Archives[role]
-		s.artifactUpdate("base", catalog.Artifact{Role: role, Name: pin.File, Size: pin.Size, SHA256: pin.SHA256}, source, progress, nil)
+	paths := map[string]string{}
+	for _, f := range s.picks {
+		if f.Layer == "base" && f.Profile == p.ID {
+			paths[f.SHA256] = f.Path
+		}
 	}
-	return f
+	return &base.Files{Dir: s.cacheDir, Profile: p, Provider: base.Provider{Paths: paths}}
 }
 func (s *Service) baseStore(p profile.Profile) *base.Store {
 	return &base.Store{Dir: s.backupDir, Profile: p, Version: s.Info().Version}

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: AGPL-3.0-only
-// Created by riko chen on 2026-10-20
+// Created by riko chen on 2026-10-21
 
 // Package gui is the desktop shell. One http.Handler serves the embedded page and its JSON API;
 // the Wails app plugs it into its windows, and the browser mode (openxplay-flasher web) and the
@@ -41,6 +41,7 @@ type Native interface {
 	OpenIdentity() ([]string, error)
 	OpenBackupFolder() (string, error)
 	OpenArtifact() (string, error)
+	OpenArtifacts() ([]string, error)
 	ShowFolder(path string) error
 }
 
@@ -64,7 +65,7 @@ var longPoll = 20 * time.Second
 // openable lists the URL prefixes the page may open in the system browser.
 var openable = []string{
 	"https://openxplay.org/",
-	"https://github.com/OpenXPlay/",
+	"https://github.com/",
 }
 
 // Content types by extension. Go's mime package reads the Windows registry, where .js is

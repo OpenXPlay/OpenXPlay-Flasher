@@ -9,12 +9,14 @@ is usually only the relay. Its Configuration view reads and changes the configur
 connected Linux relay over USB: the device keeps a backup of each version, and if the relay does not
 stay up after a change, the previous version is put back.
 
-> Development preview: this version detects devices, shows their layers and edits their
-> configuration; installing and updating layers are not available yet.
+> Preview release. It installs every layer: the base system with fastboot (macOS only for now) and
+> device support and the relay over adb (on Windows only through an adb server that is already
+> running). It never downloads packages: Prepare lists each file with its download links, you choose
+> the files you downloaded, and they are checked by SHA-256 against the signed package list.
 
 | Device | Layers |
 | --- | --- |
-| UFI003 4G USB dongle (OpenStick) | base system (OpenStick Debian 11), device support, OpenXPlay relay |
+| UFI003 4G USB dongle (OpenStick) | OpenStick v1, device support, OpenXPlay relay |
 
 Device profiles live in [`internal/profile/profiles`](./internal/profile/profiles).
 

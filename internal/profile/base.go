@@ -155,3 +155,6 @@ func (b *Base) MaxProtected(name string) int64 {
 	}
 	return sizes[len(sizes)-1]
 }
+
+// DisplayName uses the pinned upstream release rather than the distribution's version.
+func (b Base) DisplayName() string { return "OpenStick " + strings.TrimPrefix(b.Release, "openstick-") }

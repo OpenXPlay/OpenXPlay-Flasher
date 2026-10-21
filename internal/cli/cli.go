@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: AGPL-3.0-only
-// Created by riko chen on 2026-10-20
+// Created by riko chen on 2026-10-21
 
 // Package cli dispatches the command line: no command starts the desktop app, and the other
 // commands are a developer shell over app.Service, for support and hardware-in-the-loop tests.
@@ -37,9 +37,9 @@ Commands:
                    install checked local layer packages over adb (asks for y without -yes)
   catalog fetch [--channel C], catalog show
                    fetch/show the signed catalog / 获取或查看签名目录
-  download --layer base|device|relay [--version V]
-                   download verified files to the cache / 下载并验证文件
-  import FILE...   import files by SHA-256 / 按 SHA-256 导入文件
+  Packages are never downloaded. Choose local files using the links in Prepare.
+  不会自动下载安装包。请通过“准备”页面的链接获取文件后自行选择。
+  import FILE...   check and remember file paths by SHA-256; no copy / 按 SHA-256 检查并记住路径，不复制文件
   backup list|show SERIAL|verify SERIAL
   backup import DIR --serial SERIAL
                    manage modem backups / 管理调制解调器备份
@@ -49,7 +49,7 @@ Commands:
                    designate stock adb for this session / 为本次会话指定原厂 adb
   plan --choice ID print steps without running them / 仅显示方案步骤
   install --choice ID [--yes-erase SERIAL] [--stock-adb SERIAL] [PACKAGE...]
-                   install from catalog or local files / 从目录或本地文件安装
+                   install from chosen local files / 从所选本地文件安装
                    choices: stock, base, full-reinstall, repair, full, device, relay
                    --choice full-reinstall --base-plan repair: C + device + relay / 修复并完整安装
   config-get PATH  print a configuration file of the connected device
@@ -75,7 +75,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	}
 	cmd := args[0]
 	switch cmd {
-	case "catalog", "download", "import", "backup", "fastboot", "designate-stock", "plan", "install":
+	case "catalog", "import", "backup", "fastboot", "designate-stock", "plan", "install":
 		return runEngineCLI(cmd, args[1:], os.Stdin, stdout, stderr)
 	}
 	if cmd == "help" || cmd == "-h" || cmd == "--help" {

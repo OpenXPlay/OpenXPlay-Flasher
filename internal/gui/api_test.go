@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: AGPL-3.0-only
-// Created by riko chen on 2026-10-20
+// Created by riko chen on 2026-10-21
 
 package gui
 
@@ -39,6 +39,7 @@ func (f *fakeNative) OpenFile() (string, []byte, error) { return "", nil, errNoD
 func (f *fakeNative) OpenPackages(string) ([]string, error) { return nil, errNoDialogs }
 
 func (f *fakeNative) OpenIdentity() ([]string, error)   { return nil, errNoDialogs }
+func (f *fakeNative) OpenArtifacts() ([]string, error)  { return nil, errNoDialogs }
 func (f *fakeNative) OpenArtifact() (string, error)     { return "", errNoDialogs }
 func (f *fakeNative) OpenBackupFolder() (string, error) { return "", errNoDialogs }
 func (f *fakeNative) ShowFolder(path string) error      { f.opened = append(f.opened, path); return nil }
@@ -174,7 +175,7 @@ func TestOpenOnlyKnownSites(t *testing.T) {
 		t.Fatalf("open project page = %d %s", rec.Code, rec.Body)
 	}
 	for _, url := range []string{"https://example.com/", "file:///etc/passwd", "https://openxplay.org.evil.test/",
-		"http://openxplay.org/", "https://openxplay.org@evil.test/", "https://github.com/OpenXPlay-evil/"} {
+		"http://openxplay.org/", "https://openxplay.org@evil.test/", "https://github.com.evil.test/OpenXPlay/"} {
 		if rec := f.do("POST", "/api/open", `{"url":"`+url+`"}`); rec.Code != http.StatusForbidden {
 			t.Errorf("open %s = %d", url, rec.Code)
 		}

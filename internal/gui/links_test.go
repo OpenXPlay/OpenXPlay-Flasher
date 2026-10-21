@@ -60,3 +60,20 @@ func TestPageReceivesTheSharedLinkTable(t *testing.T) {
 		}
 	}
 }
+
+func TestPackageReleaseHostsAreAllowlisted(t *testing.T) {
+	f := newFixture(t)
+	for _, url := range []string{"https://github.com/OpenStick/OpenStick/releases/tag/v1", "https://github.com/OpenXPlay/OpenXPlay-Hardware/releases", "https://github.com/OpenXPlay/OpenXPlay-Relay/releases"} {
+		if !canOpen(url) {
+			t.Fatal("release link refused", url)
+		}
+		if rec := f.do("POST", "/api/open", `{"url":"`+url+`"}`); rec.Code != 204 {
+			t.Fatal(rec.Code, rec.Body)
+		}
+	}
+	for _, url := range []string{"https://objects.githubusercontent.com/page", "https://github.com.evil.test/releases", "https://github.com@evil.test/releases", "http://github.com/releases"} {
+		if canOpen(url) {
+			t.Fatal("unlisted host accepted", url)
+		}
+	}
+}

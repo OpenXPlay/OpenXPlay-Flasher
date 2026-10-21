@@ -11,7 +11,7 @@ import { WARNING_TEXT } from "../assets/installlogic.js";
 class NodeFake {
   constructor(tag = "", text = "") {
     this.tag = tag; this.children = []; this.attributes = {}; this.listeners = {};
-    this.className = ""; this.id = ""; this.dataset = {}; this.hidden = false; this.disabled = false; this.text = text;
+    this.className = ""; this.id = ""; this.dataset = {}; this.hidden = false; this.disabled = false; this.open = false; this.text = text;
     this.classList = { toggle: (name, enabled) => {
       const classes = new Set(this.className.split(" ").filter(Boolean));
       if (enabled) classes.add(name); else classes.delete(name);
@@ -72,7 +72,7 @@ function snapshot() {
   }, installed: "1.0", action: layer === "base" ? "guide" : "update", choice: layer === "base" ? undefined : layer, enabled: true }));
   const choice = (id, ids) => ({ id, layers: ids, destructive: false, ready: false,
     steps: ids.map((layer) => ({ layer, action: "install" })),
-    needs: ids.map((layer) => ({ layer, status: "missing", fileTypes: layer === "device" ? [".tar.gz"] : [".deb", ".manifest.json"], ready: false })) });
+    needs: ids.map((layer) => ({ layer, offline:true, artifacts: (layer === "relay" ? ["deb", "manifest"] : ["bundle"]).map((role)=>({role, name:role, verified:false, urls:["https://github.com/OpenXPlay/OpenXPlay-Relay/releases"]})), status: "missing", fileTypes: layer === "device" ? [".tar.gz"] : [".deb", ".manifest.json"], ready: false })) });
   return { target: { profile: "ufi003", device: { usb: { serial: "fake-device" } } },
     installed: { layers: { base: "kernel", device: "1.0", relay: "1.0" } }, installedStale: false,
     layers, packages: [], choices: [choice("full", ["device", "relay"]), choice("device", ["device"]), choice("relay", ["relay"])], suggested: "relay" };
@@ -80,8 +80,8 @@ function snapshot() {
 function ready(s) {
   for (const c of s.choices) {
     c.ready = true;
-    for (const n of c.needs) Object.assign(n, { ready: true, status: "checked", comparison: "upgrade",
-      package: { id: n.layer, name: n.layer, version: "2.0", size: 1, sha256: "a".repeat(64), checked: true } });
+    for (const n of c.needs) { n.artifacts?.forEach((a)=>{a.verified=true;}); Object.assign(n, { ready: true, status: "checked", comparison: "upgrade",
+      package: { id: n.layer, name: n.layer, version: "2.0", size: 1, sha256: "a".repeat(64), checked: true } }); }
   }
   return s;
 }
@@ -109,10 +109,10 @@ for (const language of ["en", "zh-CN"]) test("rendered layer-first flow, warning
     request ||= { url, body: JSON.parse(options.body) };
     return { ok: true, status: 200, json: async () => ready(snapshot()) };
   };
-  const input = d.get("install-path-relay");
+  const input = d.get("artifact-path-relay-deb");
   input.listeners.input[0]({ target: { value: "/fake/relay.deb" } });
-  await d.get("pick-relay").click();
-  assert.deepEqual(request, { url: "/api/install/packages", body: { layer: "relay", path: "/fake/relay.deb" } });
+  await d.get("pick-relay-deb").click();
+  assert.deepEqual(request, { url: "/api/artifacts/import", body: { choice: "relay", layer: "relay", role: "deb", multiple:false, path: "/fake/relay.deb" } });
   assert.equal(d.get("install-continue").disabled, false);
   await d.button("Back").click();
   assert.equal(d.get("choice-relay").attributes["aria-pressed"], "true");
@@ -193,9 +193,65 @@ test("base choices render their localized names, reasons and named steps", async
     layers: ["base"], destructive: true, needs: [{ layer: "base" }], steps: [{ layer: "base", action: "flash", name: { en: "Write rootfs", "zh-CN": "写入根文件系统" } }] });
   page.receive(s);
   await d.get("install-continue").click();
-  assert.equal(d.get("choice-stock").disabled, true);
-  assert.ok(d.root.textContent.includes("需要原厂固件"));
+  assert.equal(d.get("choice-stock"), undefined);
+  const reflash = d.nodes().find(n=>n.className === "reflash-choices");
+  assert.equal(reflash.open, false);
   await d.get("choice-base").click();
   assert.ok(d.root.textContent.includes("写入根文件系统"));
   assert.ok(!d.root.textContent.includes("undefined"));
 });
+
+for (const language of ["en", "zh-CN"]) test("Prepare links, multiple paths, unmatched files and offline states in " + language, async () => {
+  const d = dom(); setLang(language);
+  const savedInterval = globalThis.setInterval; globalThis.setInterval = () => 0;
+  const page = await import("../assets/install.js?files-"+language); page.init(boot); globalThis.setInterval = savedInterval;
+  let s = snapshot();
+  const sha = "b609b91c94b07d7c" + "a".repeat(48);
+  s.catalog = {status:"fresh", channel:"beta", index:{sequence:17, generated:"2026-10-21T08:00:00Z"}};
+  const base = {layer:"base",ready:false,package:{checked:false,version:"openstick-v1"},artifacts:[{role:"boot",name:"boot.img",size:1024,sha256:sha,verified:false,urls:["https://github.com/OpenStick/OpenStick/releases/tag/v1"]}]};
+  for (const c of s.choices) for (const n of c.needs) {
+    n.offline=false;
+    for (const a of n.artifacts) Object.assign(a,{size:2048,sha256:sha,urls:["https://github.com/OpenXPlay/OpenXPlay-Relay/releases/download/v1/"+a.name,"https://github.com/OpenXPlay/OpenXPlay-Relay/releases"]});
+  }
+  s.choices.push({id:"full-reinstall",name:{en:"Full reinstall","zh-CN":"完整重装"},destructive:true,layers:["base","device","relay"],needs:[base,...s.choices[0].needs],steps:[]});
+  const calls=[];
+  globalThis.fetch=async(url,options)=>{ calls.push({url,body:options.body ? JSON.parse(options.body) : undefined}); return {ok:true,status:200,json:async()=>s}; };
+  page.receive(s); await d.get("nav-1").click(); await d.get("choice-full-reinstall").click(); await d.get("install-continue").click();
+  assert.deepEqual(calls.map(c=>c.url),["/api/install/prepare","/api/install"],"Prepare has no automatic download request");
+  assert.equal(d.get("install-continue").disabled,true);
+  const links=d.nodes().filter(n=>n.tag === "a");
+  assert.ok(links.some(n=>n.attributes.href.includes("OpenStick")));
+  assert.ok(d.root.textContent.includes(sha.slice(0,12)));
+  assert.ok(d.root.textContent.includes(t("Download each file from its link or any other source you trust. The app checks its SHA-256, so the file name does not matter.")));
+  let copied="";
+  Object.defineProperty(globalThis,"navigator",{configurable:true,value:{clipboard:{writeText:async(value)=>{copied=value;}}}});
+  await d.nodes().find(n=>n.tag === "button" && n.attributes["aria-label"] === t("Show and copy full SHA-256")).click();
+  assert.equal(copied,sha); assert.ok(d.root.textContent.includes(sha));
+  d.get("multiple-paths").listeners.input[0]({target:{value:"/tmp/renamed one\n/tmp/another name"}});
+  s=ready(s); for(const c of s.choices)for(const n of c.needs)for(const a of n.artifacts||[])a.path="/tmp/renamed one";
+  s.fileResults=[{problem:{code:"unmatched-file",detail:"other.zip · 42 B · SHA-256 abcdef012345"}}];
+  await d.get("pick-several").click();
+  assert.deepEqual(calls.find(c=>c.url === "/api/artifacts/import").body,{choice:"full-reinstall",layer:"",role:"",multiple:true,paths:["/tmp/renamed one","/tmp/another name"]});
+  assert.equal(d.get("install-continue").disabled,false);
+  assert.ok(d.root.textContent.includes(problemTextForTest("unmatched-file","other.zip · 42 B · SHA-256 abcdef012345")));
+  s.catalog.status="cached/offline";page.receive(s);
+  assert.ok(d.root.textContent.includes(t("Package list: saved copy (offline), from {date}",{date:""}).split(language === "en" ? ", from " : "，日期：")[0]));
+  assert.ok(d.root.textContent.includes("2026"));
+  s.catalog={status:"failed"};for(const c of s.choices)for(const n of c.needs)n.offline=true;
+  page.receive(s);
+  assert.ok(d.root.textContent.includes(t("Package list unavailable. Base files use the profile pins; other packages use their manifests.")));
+  assert.ok(d.root.textContent.includes(t("Not checked against the package list (offline)")));
+  assert.ok(d.root.textContent.includes("boot.img"));assert.ok(d.root.textContent.includes(sha.slice(0,12)));
+  s.fileResults=[{problem:{code:"catalog-unknown",detail:"0.1.5~beta.1"}},{problem:{code:"file-changed",detail:"renamed file"}}];
+  s.fileCheck={status:"checking",name:"big file",done:1024,total:2048};page.receive(s);
+  assert.equal(d.get("install-continue").disabled,true);
+  assert.ok(d.root.textContent.includes("0.1.5~beta.1"));assert.ok(d.root.textContent.includes("renamed file"));
+  await d.get("cancel-file-check").click();assert.equal(calls.at(-1).url,"/api/artifacts/cancel");
+  s={...s,nextSteps:{serial:"fake-device",identity:"present"},job:{status:"succeeded",started:"2026-10-21T01:00:00Z",finished:"2026-10-21T01:01:00Z",steps:[],installed:s.installed,observed:true,log:""}};page.receive(s);
+  const success=d.nodes().find(n=>n.className === "identity-success result ok");
+  assert.ok(success);assert.ok(success.children.some(n=>n.tag === "strong" && n.textContent === t("Identity added")));
+  assert.ok(success.textContent.includes("identity.pk8 · certificate.p7b"));assert.ok(!d.root.textContent.includes("debian-11"));
+});
+function problemTextForTest(code,detail) {
+  return t("This file is not one of the files listed here: {detail}.",{detail});
+}

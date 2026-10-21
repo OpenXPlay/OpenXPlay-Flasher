@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: AGPL-3.0-only
-// Created by riko chen on 2026-10-20
+// Created by riko chen on 2026-10-21
 
 package gui
 
@@ -24,10 +24,10 @@ import (
 
 const webCookie = "oxpf_key"
 
-// webNative backs the browser mode, where the page opens links itself.
+// webNative uses the same allowlisted system-browser opener as the desktop page.
 type webNative struct{}
 
-func (webNative) OpenURL(string) error { return errNoDialogs }
+func (webNative) OpenURL(url string) error { return openSystemURL(url) }
 
 func (webNative) SaveFile(string, []byte) (string, error) { return "", errNoDialogs }
 
@@ -36,6 +36,7 @@ func (webNative) OpenFile() (string, []byte, error) { return "", nil, errNoDialo
 func (webNative) OpenPackages(string) ([]string, error) { return nil, errNoDialogs }
 
 func (webNative) OpenIdentity() ([]string, error)   { return nil, errNoDialogs }
+func (webNative) OpenArtifacts() ([]string, error)  { return nil, errNoDialogs }
 func (webNative) OpenArtifact() (string, error)     { return "", errNoDialogs }
 func (webNative) OpenBackupFolder() (string, error) { return "", errNoDialogs }
 func (webNative) ShowFolder(path string) error      { return showFolder(path) }

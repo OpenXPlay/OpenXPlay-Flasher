@@ -13,7 +13,7 @@ import (
 )
 
 // PackageProvider resolves already checked payloads, without doing I/O during planning. Picked
-// files and verified catalog downloads can both supply this boundary; neither defines a choice.
+// files checked against a catalog can both supply this boundary; neither defines a choice.
 type PackageProvider interface {
 	ForLayer(string) (*Package, *Problem)
 }
@@ -43,6 +43,8 @@ type ChoiceDefinition struct {
 }
 
 type ArtifactNeed struct {
+	URLs           []string  `json:"urls"`
+	Path           string    `json:"path,omitempty"`
 	Status         string    `json:"status"`
 	BytesPerSecond float64   `json:"bytesPerSecond"`
 	Updated        time.Time `json:"updated,omitempty"`
@@ -58,6 +60,7 @@ type ArtifactNeed struct {
 }
 
 type PackageNeed struct {
+	Offline    bool           `json:"offline"`
 	Artifacts  []ArtifactNeed `json:"artifacts,omitempty"`
 	Layer      string         `json:"layer"`
 	FileTypes  []string       `json:"fileTypes"`
@@ -85,14 +88,15 @@ type Choice struct {
 }
 
 type LayerRow struct {
-	Layer      string       `json:"layer"`
-	Name       profile.Text `json:"name"`
-	Installed  string       `json:"installed"`
-	Action     string       `json:"action"` // guide, install, update
-	ActionName profile.Text `json:"actionName,omitempty"`
-	Choice     string       `json:"choice,omitempty"`
-	Enabled    bool         `json:"enabled"`
-	Reason     *Problem     `json:"reason,omitempty"`
+	KernelRelease string       `json:"kernelRelease,omitempty"`
+	Layer         string       `json:"layer"`
+	Name          profile.Text `json:"name"`
+	Installed     string       `json:"installed"`
+	Action        string       `json:"action"` // guide, install, update
+	ActionName    profile.Text `json:"actionName,omitempty"`
+	Choice        string       `json:"choice,omitempty"`
+	Enabled       bool         `json:"enabled"`
+	Reason        *Problem     `json:"reason,omitempty"`
 }
 
 type layerRecipe struct {

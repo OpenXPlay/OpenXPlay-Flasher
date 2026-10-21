@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: AGPL-3.0-only
-// Created by riko chen on 2026-10-20
+// Created by riko chen on 2026-10-21
 
 //go:build !nogui
 
@@ -117,11 +117,13 @@ func (h *host) OpenPackages(layer string) ([]string, error) {
 }
 
 func (h *host) OpenIdentity() ([]string, error) {
-	return h.app.Dialog.OpenFile().CanChooseFiles(true).
-		AddFilter("identity.pk8, certificate.p7b, ZIP", "*.pk8;*.p7b;*.zip").PromptForMultipleSelection()
+	return h.app.Dialog.OpenFile().CanChooseFiles(true).PromptForMultipleSelection()
 }
 func (h *host) OpenArtifact() (string, error) {
 	return h.app.Dialog.OpenFile().CanChooseFiles(true).PromptForSingleSelection()
+}
+func (h *host) OpenArtifacts() ([]string, error) {
+	return h.app.Dialog.OpenFile().CanChooseFiles(true).PromptForMultipleSelection()
 }
 func (h *host) OpenBackupFolder() (string, error) {
 	return h.app.Dialog.OpenFile().CanChooseFiles(false).CanChooseDirectories(true).PromptForSingleSelection()

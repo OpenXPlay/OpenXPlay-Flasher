@@ -366,14 +366,14 @@ func baseServiceFixture(t *testing.T) (*Service, *baseTestDevice, *baseTestFB, *
 	s.SetADB(baseTestConnector{d: d})
 	s.SetFastboot(func(context.Context, usb.DeviceInfo) (base.Fastboot, error) { return fb, nil }, true)
 	dir := t.TempDir()
-	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		data, ok := payloads[strings.TrimPrefix(r.URL.Path, "/")]
-		if !ok {
-			return nil, errors.New("unexpected fixture URL")
-		}
-		return &http.Response{StatusCode: 200, ContentLength: int64(len(data)), Body: io.NopCloser(bytes.NewReader(data)), Header: make(http.Header)}, nil
-	})}
-	s.ConfigureStorage(filepath.Join(dir, "data"), filepath.Join(dir, "cache"), filepath.Join(dir, "backups"), source, catalog.NewCache(filepath.Join(dir, "cache"), nil, client))
+
+	s.ConfigureStorage(filepath.Join(dir, "data"), filepath.Join(dir, "cache"), filepath.Join(dir, "backups"), source)
+	if err := os.MkdirAll(filepath.Join(dir, "chosen"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range payloads {
+		testPut(t, filepath.Join(dir, "chosen", name), data)
+	}
 	t.Cleanup(s.Stop)
 	return s, d, fb, source, payloads
 }
@@ -384,9 +384,10 @@ func TestCatalogEveryLayerAndFullBaseJob(t *testing.T) {
 	if state, err := s.CatalogFetch(ctx, "beta"); err != nil || state.Status != "fresh" {
 		t.Fatal(state, err)
 	}
-	if got := s.Install(ctx); got.Suggested != "repair" || len(got.Choices) != 7 {
+	if got := s.Install(ctx); got.Suggested != "repair" || len(got.Choices) != 6 {
 		t.Fatal("missing fastboot choices")
 	}
+	selectFixtureFiles(t, s)
 	if _, err := s.InstallPrepare(ctx, "full-reinstall"); err != nil {
 		t.Fatal(err)
 	}
@@ -495,6 +496,7 @@ func TestRepairPlusLayersIsOneExplicitJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Install(ctx)
+	selectFixtureFiles(t, s)
 	if _, err := s.InstallPrepare(ctx, "full-reinstall"); err != nil {
 		t.Fatal(err)
 	}
@@ -559,22 +561,20 @@ func TestOfflineImportsAndLocalArtifactProvenance(t *testing.T) {
 		t.Fatalf("offline preparation %+v %v", choice, err)
 	}
 	for _, need := range choice.Needs {
+		if need.Layer != "base" && !need.Offline {
+			t.Fatal("manifest-only offline note missing")
+		}
 		if len(need.Artifacts) == 0 {
 			t.Fatal("missing provenance", need.Layer)
 		}
 		for _, a := range need.Artifacts {
-			want := "local"
-			if need.Layer == "base" {
-				want = "imported"
-			}
+			want := "selected"
 			if !a.Verified || a.Source != want {
 				t.Fatalf("artifact provenance %+v", a)
 			}
 		}
 	}
-	if _, err := s.DownloadLayer(t.Context(), "ufi003", "base", "openstick-v2"); err == nil {
-		t.Fatal("download silently substituted another base release")
-	}
+
 }
 
 func TestLayerHandoffRetainsOriginalBoardIdentity(t *testing.T) {
@@ -584,6 +584,7 @@ func TestLayerHandoffRetainsOriginalBoardIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Install(ctx)
+	selectFixtureFiles(t, s)
 	if _, err := s.InstallPrepare(ctx, "full-reinstall"); err != nil {
 		t.Fatal(err)
 	}
@@ -618,8 +619,8 @@ func TestReadOnlyFastbootFactsAndResumeOffer(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := s.Install(t.Context())
-	if state.Suggested != "full" || !slices.ContainsFunc(state.Choices, func(c stage.Choice) bool { return c.ID == "repair" }) {
-		t.Fatal("Linux should suggest its missing adb layers while keeping explicit Repair available")
+	if state.Suggested != "repair" || !slices.ContainsFunc(state.Choices, func(c stage.Choice) bool { return c.ID == "repair" }) {
+		t.Fatal("An unfinished journal should suggest Repair")
 	}
 	journal.Finished = true
 	if err := (base.Journals{Dir: s.dataDir}).Save(t.Context(), journal); err != nil {
@@ -636,6 +637,7 @@ func TestBackupOperationImportsAndListsSets(t *testing.T) {
 	if _, err := s.CatalogFetch(t.Context(), "beta"); err != nil {
 		t.Fatal(err)
 	}
+	selectFixtureFiles(t, s)
 	dir := t.TempDir()
 	for i, name := range []string{"fsc", "fsg", "modemst1", "modemst2"} {
 		testPut(t, filepath.Join(dir, name+".bin"), bytes.Repeat([]byte{byte(70 + i)}, 64))
@@ -694,5 +696,142 @@ func TestBackupOperationImportsAndListsSets(t *testing.T) {
 	}
 	if len(fb.calls) != 0 || len(d.opened) != 0 {
 		t.Fatal("backup metadata and imports accessed a device")
+	}
+}
+
+func selectFixtureFiles(t *testing.T, s *Service) {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(filepath.Dir(s.dataDir), "chosen", "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := s.SelectFiles(t.Context(), "", "", "", paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range state.FileResults {
+		if r.Problem != nil {
+			t.Fatal(r.Problem)
+		}
+	}
+}
+
+func TestRememberedPathsAreRecheckedWithoutCopying(t *testing.T) {
+	s, d, _, source, _ := baseServiceFixture(t)
+	s.CatalogFetch(t.Context(), "beta")
+	selectFixtureFiles(t, s)
+	saved, err := os.ReadFile(filepath.Join(s.dataDir, "selected-files.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(saved, []byte("chosen")) {
+		t.Fatal("original paths were not remembered")
+	}
+	if _, err := os.Stat(s.cacheDir); !os.IsNotExist(err) {
+		t.Fatal("choosing files created a cache copy")
+	}
+	d.det.set(testCandidate(profile.ModeADB, 1, true))
+	other := New(s.profiles, s.detector, discardEvents{})
+	other.SetADB(baseTestConnector{d: d})
+	other.ConfigureStorage(s.dataDir, s.cacheDir, s.backupDir, source)
+	other.CatalogShow(t.Context())
+	other.Install(t.Context())
+	before, err := other.InstallPlan(stage.Request{Choice: "full-reinstall"})
+	if err != nil || before.Ready {
+		t.Fatal("stored metadata was trusted without rehashing")
+	}
+	state, err := other.InstallPrepare(t.Context(), "full-reinstall")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range state.FileResults {
+		if r.Problem != nil {
+			t.Fatal(r.Problem)
+		}
+	}
+	after, err := other.InstallPlan(stage.Request{Choice: "full-reinstall"})
+	if err != nil || !after.Ready {
+		t.Fatal("remembered files not rechecked", err)
+	}
+	filename := other.picks[artifactKey("base", "boot")].Path
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data[0] ^= 1
+	testPut(t, filename, data)
+	files := other.baseFilesLocked(s.profiles[0])
+	if err := files.Prepare(t.Context()); !errors.Is(err, catalog.ErrIntegrity) {
+		t.Fatalf("changed base input used: %v", err)
+	}
+}
+
+type checkGate struct {
+	began, proceed chan struct{}
+	once           sync.Once
+}
+
+func (g *checkGate) Emit(name string, data any) {
+	if name != EventInstall {
+		return
+	}
+	state, ok := data.(InstallState)
+	if ok && state.FileCheck != nil && state.FileCheck.Status == "checking" {
+		g.once.Do(func() { close(g.began); <-g.proceed })
+	}
+}
+func TestSelectedFileCheckCanBeCancelledWithProgress(t *testing.T) {
+	s, _, _, _, _ := baseServiceFixture(t)
+	gate := &checkGate{began: make(chan struct{}), proceed: make(chan struct{})}
+	s.events = gate
+	filename := filepath.Join(t.TempDir(), "large fake package")
+	testPut(t, filename, bytes.Repeat([]byte{24}, 8<<20))
+	finished := make(chan InstallState, 1)
+	go func() { state, _ := s.SelectFiles(t.Context(), "", "", "", []string{filename}); finished <- state }()
+	select {
+	case <-gate.began:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no hashing progress")
+	}
+	progress := s.CancelFileCheck().FileCheck
+	if progress == nil || progress.Done <= 0 || progress.Done >= progress.Total {
+		t.Fatalf("progress %+v", progress)
+	}
+	close(gate.proceed)
+	select {
+	case state := <-finished:
+		if state.FileCheck.Status != "cancelled" || len(state.FileResults) != 1 || state.FileResults[0].Problem.Code != "file-cancelled" {
+			t.Fatalf("cancel %+v", state.FileResults)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("hashing did not cancel")
+	}
+	if len(s.picks) != 0 {
+		t.Fatal("cancelled file was remembered")
+	}
+}
+
+func TestPreparingRelayIgnoresChangedUnneededDeviceBundle(t *testing.T) {
+	s, _, _, _, _ := baseServiceFixture(t)
+	s.CatalogFetch(t.Context(), "beta")
+	selectFixtureFiles(t, s)
+	changed := s.picks[artifactKey("device", "bundle")].Path
+	result, err := s.SelectFiles(t.Context(), "relay", "", "", []string{changed})
+	if err != nil || len(result.FileResults) != 1 || result.FileResults[0].Problem == nil || result.FileResults[0].Problem.Code != "unmatched-file" {
+		t.Fatal("an unneeded file was not reported as unmatched")
+	}
+	testPut(t, changed, []byte("changed unneeded bundle"))
+	paths := []string{s.picks[artifactKey("relay", "deb")].Path, s.picks[artifactKey("relay", "manifest")].Path}
+	state, err := s.SelectFiles(t.Context(), "relay", "", "", paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range state.FileResults {
+		if r.Problem != nil {
+			t.Fatal("unneeded device blocked relay selection", r.Problem)
+		}
+	}
+	if _, err := s.InstallPrepare(t.Context(), "relay"); err != nil {
+		t.Fatal("unneeded device blocked Prepare", err)
 	}
 }

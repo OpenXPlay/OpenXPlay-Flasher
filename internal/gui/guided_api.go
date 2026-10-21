@@ -27,23 +27,18 @@ func guidedRoutes(mux *http.ServeMux, d Deps) {
 	mux.HandleFunc("GET /api/artifacts", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, d.Service.InstallSnapshot().Artifacts)
 	})
-	for _, action := range []string{"import", "pick", "retry"} {
+
+	for _, action := range []string{"import", "pick"} {
 		mux.HandleFunc("POST /api/artifacts/"+action, func(w http.ResponseWriter, r *http.Request) {
 			var in struct {
-				Layer string `json:"layer"`
-				Role  string `json:"role"`
-				Path  string `json:"path"`
+				Choice   string   `json:"choice"`
+				Layer    string   `json:"layer"`
+				Role     string   `json:"role"`
+				Path     string   `json:"path"`
+				Paths    []string `json:"paths"`
+				Multiple bool     `json:"multiple"`
 			}
 			if !readJSON(w, r, &in) {
-				return
-			}
-			if action == "retry" {
-				state, err := d.Service.RetryArtifact(r.Context(), in.Layer, in.Role)
-				if err != nil {
-					writeInstallError(w, err)
-					return
-				}
-				writeJSON(w, http.StatusOK, state)
 				return
 			}
 			if action == "pick" {
@@ -52,17 +47,33 @@ func guidedRoutes(mux *http.ServeMux, d Deps) {
 					return
 				}
 				var err error
-				in.Path, err = d.Native.OpenArtifact()
+				if in.Multiple {
+					in.Paths, err = d.Native.OpenArtifacts()
+				} else {
+					in.Path, err = d.Native.OpenArtifact()
+				}
 				if err != nil {
 					writeError(w, http.StatusInternalServerError, "picker", "")
 					return
 				}
-				if in.Path == "" {
-					writeJSON(w, http.StatusOK, d.Service.InstallSnapshot())
+			}
+			if in.Path != "" {
+				in.Paths = append(in.Paths, in.Path)
+			}
+			if len(in.Paths) == 0 {
+				writeJSON(w, http.StatusOK, d.Service.InstallSnapshot())
+				return
+			}
+			if !in.Multiple && len(in.Paths) == 1 {
+				state, err := d.Service.ImportArtifact(r.Context(), in.Layer, in.Role, in.Paths[0])
+				if err != nil {
+					writeInstallError(w, err)
 					return
 				}
+				writeJSON(w, http.StatusOK, state)
+				return
 			}
-			state, err := d.Service.ImportArtifact(r.Context(), in.Layer, in.Role, in.Path)
+			state, err := d.Service.SelectFiles(r.Context(), in.Choice, in.Layer, in.Role, in.Paths)
 			if err != nil {
 				writeInstallError(w, err)
 				return
@@ -70,6 +81,14 @@ func guidedRoutes(mux *http.ServeMux, d Deps) {
 			writeJSON(w, http.StatusOK, state)
 		})
 	}
+	mux.HandleFunc("POST /api/artifacts/cancel", func(w http.ResponseWriter, r *http.Request) {
+		var in struct{}
+		if !readJSON(w, r, &in) {
+			return
+		}
+		writeJSON(w, http.StatusOK, d.Service.CancelFileCheck())
+	})
+
 	mux.HandleFunc("POST /api/backups/pick", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Serial string `json:"serial"`

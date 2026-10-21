@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: AGPL-3.0-only
-// Created by riko chen on 2026-10-20
+// Created by riko chen on 2026-10-21
 
 // Package app is the flasher core shared by the GUI and the CLI. It knows nothing about Wails or
 // the terminal: shells call Service methods and receive pushed state through Events.
@@ -13,7 +13,6 @@ import (
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/base"
-	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/catalog"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/config"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/power"
@@ -44,7 +43,11 @@ type Service struct {
 
 	catalogMu                    sync.Mutex
 	catalogSource                CatalogSource
-	catalogCache                 *catalog.Cache
+	picks                        map[string]SelectedFile
+	checkedFiles                 map[string]bool
+	fileCheck                    *FileCheck
+	fileResults                  []FileResult
+	checkCancel                  context.CancelFunc
 	catalogState                 CatalogState
 	artifacts                    map[string]stage.ArtifactNeed
 	dataDir, cacheDir, backupDir string

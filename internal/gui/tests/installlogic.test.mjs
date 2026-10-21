@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { canChoose, canContinue, canStart, canNavigate, canSkipBackup, neededRows, confirmationWarning,
   guardBeforeUnload, WARNING_TEXT, unplugText, problemText, elapsed, displayVersion, phase, mergeState, ACTION_TEXT,
-  suggestedAction, phaseStyle, phaseGroups, nextStepsState, identitySelection, backupRestoration } from "../assets/installlogic.js";
+  suggestedAction, phaseStyle, phaseGroups, nextStepsState, backupRestoration, choiceGroups, parsePaths } from "../assets/installlogic.js";
 import { setLang, t } from "../assets/i18n.js";
 
 const checked = (layer) => ({ layer, package: { checked: true }, status: "checked", ready: true });
@@ -117,7 +117,7 @@ test("elapsed time stops at completion and Debian beta versions use release spel
   job.status = "succeeded";
   assert.equal(elapsed(job, Date.parse("2026-10-21T00:10:00Z")), "1:02");
   assert.equal(displayVersion("relay", "0.1.5~beta.1"), "0.1.5-beta.1");
-  assert.equal(displayVersion("base", "kernel+"), "kernel+");
+  assert.equal(displayVersion("base", "kernel+"), "OpenStick v1");
 });
 
 test("late responses cannot restore stale summaries or move a finished job back to running", () => {
@@ -131,14 +131,14 @@ test("late responses cannot restore stale summaries or move a finished job back 
 });
 
 test("suggested actions follow stock, interrupted fastboot, OpenStick and installed relay states", () => {
-  assert.equal(suggestedAction({ identity: { mode: "stock" } }), "stock");
-  assert.equal(suggestedAction({ identity: { mode: "fastboot" }, resume: { finished: false } }), "repair");
-  assert.equal(suggestedAction({ installed: { layers: { base: "kernel" } } }), "full");
-  assert.equal(suggestedAction({ installed: { layers: { base: "kernel", device: "1", relay: "1" } } }), "relay");
+  assert.equal(suggestedAction({ identity: { mode: "stock" }, choices: [{id:"stock"}] }), "stock");
+  assert.equal(suggestedAction({ identity: { mode: "fastboot" }, resume: { finished: false }, choices: [{id:"repair"}] }), "repair");
+  assert.equal(suggestedAction({ installed: { layers: { base: "kernel" } }, choices: [{id:"full"}] }), "full");
+  assert.equal(suggestedAction({ installed: { layers: { base: "kernel", device: "1", relay: "1" } }, choices: [{id:"relay"}] }), "relay");
   assert.equal(suggestedAction(null), "");
 });
 
-test("Prepare gates every catalog artifact and permits a separately checked local package", () => {
+test("Prepare gates every selected file and cannot bypass the catalog with another package", () => {
   const s = state();
   const need = checked("relay");
   need.package.sha256 = "local-hash";
@@ -147,10 +147,10 @@ test("Prepare gates every catalog artifact and permits a separately checked loca
   assert.equal(canContinue(s, "relay"), false);
   need.artifacts[1].verified = true;
   assert.equal(canContinue(s, "relay"), true);
-  need.artifacts[0].error = { code: "download" };
+  need.artifacts[0].error = { code: "file-changed" };
   assert.equal(canContinue(s, "relay"), false);
   need.artifacts.push({ role: "local", sha256: "local-hash", verified: true });
-  assert.equal(canContinue(s, "relay"), true);
+  assert.equal(canContinue(s, "relay"), false);
 });
 
 test("destructive start requires the exact board serial, independently of Prepare readiness", () => {
@@ -193,11 +193,25 @@ test("Done next steps bind identity and forward status to this dongle and a succ
   assert.equal(nextStepsState(s).relay, false);
 });
 
-test("identity file selections support either order and report the missing filename", () => {
-  assert.deepEqual(identitySelection(["/tmp/certificate.p7b"]), { ready: false, missing: "identity.pk8" });
-  assert.deepEqual(identitySelection(["C:\\Users\\owner\\identity.pk8"]), { ready: false, missing: "certificate.p7b" });
-  assert.equal(identitySelection(["/tmp/certificate.p7b", "/tmp/identity.pk8"]).ready, true);
-  assert.equal(identitySelection(["/tmp/identity.ZIP"]).ready, true);
+test("browser multiple paths preserve spaces and arbitrary filenames", () => {
+  assert.deepEqual(parsePaths(' /tmp/some file.bin\r\n"/tmp/other name"\n\n'), ["/tmp/some file.bin", "/tmp/other name"]);
+});
+
+test("Choose groups the suggestion, updates and applicable reflash actions", () => {
+  const s = state();
+  s.choices.push({id:"base"}, {id:"full-reinstall"}, {id:"repair"});
+  s.identity = {mode:"adb"};
+  let groups = choiceGroups(s);
+  assert.equal(groups.suggested.id, "full");
+  assert.deepEqual(groups.updates.map(c=>c.id), ["device", "relay"]);
+  assert.deepEqual(groups.reflash.map(c=>c.id), ["base", "full-reinstall", "repair"]);
+  s.resume = {finished:false};
+  assert.equal(choiceGroups(s).suggested.id, "repair");
+  assert.equal(choiceGroups(s).reflash.some(c=>c.id === "repair"), false);
+  s.identity.mode = "stock"; s.choices.push({id:"stock"});
+  groups = choiceGroups(s);
+  assert.equal(groups.suggested.id, "stock");
+  assert.deepEqual(groups.updates, []); assert.deepEqual(groups.reflash, []);
 });
 
 test("backup restoration follows the actual engine plan, including system-only full reinstalls", () => {

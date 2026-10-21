@@ -12,7 +12,6 @@ import (
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/base"
-	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/catalog"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/power"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
@@ -30,6 +29,8 @@ type InstallTarget struct {
 }
 
 type InstallState struct {
+	FileCheck      *FileCheck           `json:"fileCheck,omitempty"`
+	FileResults    []FileResult         `json:"fileResults"`
 	NextSteps      NextSteps            `json:"nextSteps"`
 	Artifacts      []stage.ArtifactNeed `json:"artifacts"`
 	Catalog        CatalogState         `json:"catalog"`
@@ -106,7 +107,7 @@ func (s *Service) installDevice(ctx context.Context) (InstallTarget, profile.Pro
 }
 
 func (s *Service) installSnapshotLocked() InstallState {
-	state := InstallState{NextSteps: s.nextSteps, Catalog: s.catalogState, Identity: s.baseIdentity, Resume: s.unfinished, Target: s.installTarget, Installed: s.installed, Packages: stage.PackageInfos(s.packages),
+	state := InstallState{FileCheck: s.fileCheck, FileResults: slices.Clone(s.fileResults), NextSteps: s.nextSteps, Catalog: s.catalogState, Identity: s.baseIdentity, Resume: s.unfinished, Target: s.installTarget, Installed: s.installed, Packages: stage.PackageInfos(s.packages),
 		Layers: []stage.LayerRow{}, Choices: []stage.Choice{}, Problem: s.installProblem, Job: s.installJob, InstalledStale: s.installStale}
 	for _, key := range sortedKeys(s.artifacts) {
 		state.Artifacts = append(state.Artifacts, s.artifacts[key])
@@ -120,7 +121,7 @@ func (s *Service) installSnapshotLocked() InstallState {
 		}
 	}
 	if state.Installed != nil {
-		state.Choices = stage.BuildChoices(p, *state.Installed, preparedPackages{stage.PackageSet(s.packages), s.packageProblems}, false)
+		state.Choices = stage.BuildChoices(p, *state.Installed, s.preparedPackagesLocked(s.packages), false)
 		for i := range state.Choices {
 			if state.Problem != nil {
 				state.Choices[i].Problem, state.Choices[i].Ready = state.Problem, false
@@ -231,46 +232,7 @@ func (s *Service) InstallAdd(filename string) (InstallState, error) {
 }
 
 func (s *Service) InstallAddForLayer(layer, filename string) (InstallState, error) {
-	if !s.configMu.TryLock() {
-		return s.InstallSnapshot(), ErrDeviceBusy
-	}
-	defer s.configMu.Unlock()
-	if layer == "base" {
-		size, sum, err := catalog.Hash(context.Background(), filename)
-		if err != nil {
-			return s.InstallSnapshot(), err
-		}
-		matched := false
-		for _, p := range s.profiles {
-			if p.Base != nil {
-				for _, pin := range p.Base.Archives {
-					if pin.Size == size && pin.SHA256 == sum {
-						matched = true
-					}
-				}
-			}
-		}
-		if !matched {
-			return s.InstallSnapshot(), &stage.Problem{Code: "wrong-layer", Detail: "base"}
-		}
-		err = s.importFile(context.Background(), filename)
-		return s.emitInstall(), err
-	}
-	pkg, err := stage.Open(filename)
-	if err != nil {
-		return s.InstallSnapshot(), err
-	}
-	if layer != "" && pkg.Manifest().Stage != layer {
-		return s.InstallSnapshot(), &stage.Problem{Code: "wrong-layer", Detail: layer}
-	}
-	s.mu.Lock()
-	s.packages = slices.DeleteFunc(s.packages, func(p *stage.Package) bool { return p.Manifest().Stage == pkg.Manifest().Stage })
-	s.packages = append(s.packages, pkg)
-	s.recordLocalPackageLocked(pkg)
-	delete(s.packageProblems, pkg.Manifest().Stage)
-	// Space and required packages are re-read on refresh; loading a file changes no layer.
-	s.mu.Unlock()
-	return s.emitInstall(), nil
+	return s.selectOne(context.Background(), "", layer, "", filename)
 }
 
 func (s *Service) InstallRemove(id string) (InstallState, error) {
@@ -281,12 +243,20 @@ func (s *Service) InstallRemove(id string) (InstallState, error) {
 	s.mu.Lock()
 	for _, pkg := range s.packages {
 		if pkg.Info().ID == id {
-			delete(s.artifacts, artifactKey(pkg.Manifest().Stage, "local"))
+			layer := pkg.Manifest().Stage
+			for key, f := range s.picks {
+				if f.Layer == layer {
+					delete(s.picks, key)
+					delete(s.artifacts, key)
+					delete(s.checkedFiles, f.SHA256)
+				}
+			}
 		}
 	}
 	s.packages = slices.DeleteFunc(s.packages, func(p *stage.Package) bool { return p.Info().ID == id })
 	s.mu.Unlock()
-	return s.emitInstall(), nil
+	err := s.saveSelections(context.Background())
+	return s.emitInstall(), err
 }
 
 // InstallStart re-plans against fresh facts under the same lock held until the job finishes. The
@@ -329,7 +299,7 @@ func (s *Service) startLayers(ctx context.Context, req stage.Request, retry *sta
 	s.mu.Lock()
 	packages, facts := choicePackages(p, s.packages, req.Choice), *s.installed
 	var selected *stage.Choice
-	for _, c := range stage.BuildChoices(p, facts, preparedPackages{stage.PackageSet(packages), s.packageProblems}, req.Downgrade) {
+	for _, c := range stage.BuildChoices(p, facts, s.preparedPackagesLocked(packages), req.Downgrade) {
 		if c.ID == req.Choice {
 			selected = &c
 			break
@@ -578,3 +548,16 @@ func (s *Service) InstallLog() string {
 }
 
 func sortedKeys[V any](m map[string]V) []string { keys := mapKeys(m); slices.Sort(keys); return keys }
+
+func (s *Service) preparedPackagesLocked(packages []*stage.Package) preparedPackages {
+	problems := map[string]*stage.Problem{}
+	for layer, problem := range s.packageProblems {
+		problems[layer] = problem
+	}
+	for _, pkg := range packages {
+		if problem := s.catalogPackageProblemLocked(pkg); problem != nil {
+			problems[pkg.Manifest().Stage] = problem
+		}
+	}
+	return preparedPackages{stage.PackageSet(packages), problems}
+}

@@ -17,6 +17,7 @@ export async function api(path, body, method) {
   if (!res.ok) {
     const err = new Error((data && data.error) || res.statusText);
     err.code = (data && data.code) || "http";
+    err.detail = (data && (data.detail || data.error)) || "";
     throw err;
   }
   return data;

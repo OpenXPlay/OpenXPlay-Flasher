@@ -8,11 +8,11 @@ import { linksFor } from "./settingslogic.js";
 import { ACTION_TEXT, LAYER_TEXT, STATUS_TEXT, LEFT_TEXT, COMPARISON_TEXT, WARNING_TEXT,
   problemText, canChoose, canContinue, canStart, canNavigate, canSkipBackup, selectedChoice, neededRows,
   isRunning, confirmationWarning, unplugText, guardBeforeUnload, displayVersion, elapsed, phase, mergeState,
-  suggestedAction, serialFor, PHASE_TEXT, phaseStyle, phaseGroups, nextStepsState, identitySelection, sizeText, backupRestoration } from "./installlogic.js";
+  suggestedAction, serialFor, PHASE_TEXT, phaseStyle, phaseGroups, nextStepsState, sizeText, backupRestoration, choiceGroups, CHOICE_TEXT, parsePaths } from "./installlogic.js";
 
 const view = { boot: {}, state: null, paths: {}, choice: "", step: 0, initialized: false,
   downgrade: false, busy: false, preparing: false, confirm: false, serial: "", error: null, rowErrors: {}, logOpen: false,
-  backups: null, backupError: null, backupPath: "", artifactPaths: {}, totalNotice: "", notices: new Set(),
+  backups: null, backupError: null, backupPath: "", artifactPaths: {}, multiplePaths: "", fullHashes: new Set(), reflashOpen: false,
   identityPaths: [], identityPath: "", identityMessage: "", nextError: null };
 let root, onRunning, refreshing = false;
 
@@ -71,10 +71,6 @@ async function go(step) {
   if (step === 2) {
     // A finished job may have observed only its own packages' requirements. Recheck all
     // provider rows on entering Prepare so earlier session packages are reused correctly.
-    const total = neededRows(view.state, view.choice).flatMap((n) => n.artifacts || []).filter((a) => !a.verified).reduce((n, a) => n+a.size, 0);
-    const notice = view.choice + ":" + total;
-    view.totalNotice = total && !view.notices.has(notice) ? sizeText(total) : "";
-    view.notices.add(notice);
     await prepare();
   }
   if (step === 3 && !canSkipBackup(selectedChoice(view.state, view.choice))) await readBackups();
@@ -125,10 +121,6 @@ async function changePackage(layer, action) {
   render();
 }
 
-function add(layer) {
-  return changePackage(layer, () => view.boot.web
-    ? api("install/packages", { layer, path: (view.paths[layer] || "").trim() }) : api("install/pick", { layer }));
-}
 
 async function start() {
   if (!canStart(view.state, view.choice, view.downgrade, view.busy, view.serial)) return;
@@ -161,6 +153,8 @@ function name(id) {
   return row?.name?.[lang()] || row?.name?.en || t(LAYER_TEXT[id]);
 }
 
+function baseKernel() { return view.state?.layers?.find((r) => r.layer === "base")?.kernelRelease || view.state?.installed?.kernelRelease || ""; }
+
 function freshness(stale) {
   return stale ? el("div", { class: "warning stale", role: "status" }, [
     el("p", {}, t("Installed layers may have changed; these versions are the last observation.")),
@@ -173,7 +167,8 @@ function installed(facts, stale) {
   const ids = view.state?.layers?.map((r) => r.layer) || Object.keys(facts.layers);
   return el("div", { class: "layer-summary" }, [freshness(stale),
     el("dl", { class: "installed" }, ids.flatMap((id) => [
-      el("dt", {}, name(id)), el("dd", {}, facts.layers[id] ? displayVersion(id, facts.layers[id]) : t("Not installed")),
+      el("dt", {}, id === "base" ? t("Base system") : name(id)), el("dd", {}, [facts.layers[id] ? displayVersion(id, facts.layers[id]) : t("Not installed"),
+        id === "base" && facts.layers[id] ? el("small", { class: "kernel-version" }, t("Kernel: {version}", { version: facts.kernelRelease || facts.layers.base })) : ""]),
     ])),
   ]);
 }
@@ -211,7 +206,7 @@ function choiceButton(id, text, enabled) {
     "aria-pressed": String(view.choice === id), disabled: view.busy || !enabled, onclick: () => choose(id) }, text);
 }
 
-function suggested(id) { return view.state?.suggested === id ? el("span", { class: "tag suggested" }, t("Suggested")) : ""; }
+function suggested(id) { return suggestedAction(view.state) === id ? el("span", { class: "tag suggested" }, t("Suggested")) : ""; }
 
 function stepLabel(s) { return s.name?.[lang()] || s.name?.en || t(ACTION_TEXT[s.action] || s.action); }
 
@@ -220,38 +215,42 @@ function stepList(choice) {
     el("ol", {}, choice.steps.map((s) => el("li", {}, name(s.layer) + ": " + stepLabel(s))))]);
 }
 
+function choiceLabel(c) {
+  if (c.id === "full") return t("Install device support and relay");
+  if (c.name) return c.name[lang()] || c.name.en;
+  return c.id === "device" ? t("Install / update device support") : t("Install / update relay");
+}
+
+function choiceCard(c, highlight = false) {
+  const layer = view.state?.layers?.find((r) => r.layer === c.id);
+  return el("div", { class: "full-choice" + (highlight ? " suggested-choice" : "") }, [
+    el("div", { class: "actions" }, [choiceButton(c.id, choiceLabel(c), canChoose(view.state, c.id)), suggested(c.id),
+      c.destructive ? el("span", { class: "tag destructive-tag" }, t("Erases the device")) : ""]),
+    el("p", {}, t(CHOICE_TEXT[c.id])),
+    c.layers.includes("base") && (!layer || layer.layer !== "base") && baseKernel() ? el("small", { class: "kernel-version" }, name("base") + " · " + t("Kernel: {version}", { version: baseKernel() })) : "",
+    layer ? el("p", { class: "layer-version" }, [name(layer.layer) + (layer.layer === "base" && layer.installed ? "" : " · " + (layer.installed ? displayVersion(layer.layer, layer.installed) : t("Not installed"))),
+      layer.layer === "base" && baseKernel() ? el("small", { class: "kernel-version" }, t("Kernel: {version}", { version: baseKernel() })) : ""]) : "",
+    c.reason ? el("p", { class: "note" }, c.reason[lang()] || c.reason.en) : c.problem ? el("p", { class: "note" }, problemText(t, c.problem)) : "",
+    c.problem?.code === "fastboot-unsupported" ? el("a", { href: linksFor(view.boot.links, lang()).manual, "data-open": "" }, t("Manual base installation guide")) : "",
+  ]);
+}
+
 function chooseView() {
   const state = view.state;
   const parts = [title(t("Choose layers")), freshness(state?.installedStale)];
   const full = selectedChoice(state, "full");
-  if (full?.problem?.code === "base-missing" && !state.choices.some((c) => c.name)) {
+  if (full?.problem?.code === "base-missing" && !state.choices.some((c) => c.destructive)) {
     return [...parts, el("p", { class: "warning", role: "status" }, problemText(t, full.problem)), guide()];
   }
-  if (full) parts.push(el("div", { class: "full-choice" + (state.suggested === "full" ? " suggested-choice" : "") }, [
-    el("div", { class: "actions" }, [choiceButton("full", t("Full install"), canChoose(state, "full")), suggested("full")]),
-    el("p", { class: "note" }, t("Installs {layers} in order.", { layers: full.layers.map(name).join(" → ") })),
-    full.problem ? el("p", { class: "note" }, problemText(t, full.problem)) : "",
-  ]));
-  parts.push(el("ul", { class: "layer-rows" }, (state?.layers || []).map((row) => el("li", {
-    class: "layer-row" + (state.suggested === row.choice ? " suggested-choice" : ""),
-  }, [el("div", {}, [el("strong", {}, name(row.layer)),
-    el("p", { class: "layer-version" }, row.installed ? displayVersion(row.layer, row.installed) : t("Not installed"))]),
-    row.action === "guide" ? guide() : el("div", {}, [
-      el("div", { class: "actions" }, [choiceButton(row.choice, row.actionName?.[lang()] || row.actionName?.en || (row.action === "install" ? t("Install") : t("Update / reinstall")), row.enabled), suggested(row.choice)]),
-      selectedChoice(state, row.choice)?.destructive ? el("span", { class: "tag destructive-tag" }, t("Erases the device")) : "",
-      row.reason ? el("p", { class: "note" }, problemText(t, row.reason)) : "",
-      row.reason?.code === "fastboot-unsupported" ? el("a", { href: linksFor(view.boot.links, lang()).manual, "data-open": "" }, t("Manual base installation guide")) : "",
-    ]),
-  ]))));
-  for (const c of state?.choices || []) {
-    if (!c.name || state.layers.some((row) => row.choice === c.id)) continue;
-    parts.push(el("div", { class: "full-choice" }, [
-      choiceButton(c.id, c.name[lang()] || c.name.en, canChoose(state, c.id)),
-      c.destructive ? el("span", { class: "tag destructive-tag" }, t("Erases the device")) : "", suggested(c.id),
-      c.reason ? el("p", { class: "note" }, c.reason[lang()] || c.reason.en) :
-        c.problem ? el("p", { class: "note" }, problemText(t, c.problem)) : "",
-      c.problem?.code === "fastboot-unsupported" ? el("a", { href: linksFor(view.boot.links, lang()).manual, "data-open": "" }, t("Manual base installation guide")) : "",
-    ]));
+  const groups = choiceGroups(state);
+  if (groups.suggested) parts.push(choiceCard(groups.suggested, true));
+  if (groups.updates.length) parts.push(el("section", { class: "update-layers" }, [el("h3", {}, t("Update layers")), ...groups.updates.map((c) => choiceCard(c))]));
+  if (groups.reflash.length) {
+    const details = el("details", { class: "reflash-choices" }, [el("summary", {}, t("Reflash (erases the device)")),
+      ...groups.reflash.map((c) => choiceCard(c))]);
+    details.open = view.reflashOpen;
+    details.addEventListener("toggle", () => { view.reflashOpen = details.open; });
+    parts.push(details);
   }
   const selected = selectedChoice(state, view.choice);
   if (selected && !selected.problem) parts.push(stepList(selected));
@@ -259,95 +258,104 @@ function chooseView() {
   return parts;
 }
 
-// The page consumes provider rows, never the session's whole package list. Future catalog
-// controls can fill these same needs; picking a local file stays the fallback for each row.
 function packageRow(need) {
-  const layer = need.layer, pkg = need.package, disabled = view.busy || running();
+  const layer = need.layer, pkg = need.package;
   const parts = [el("h3", {}, name(layer)),
-    el("ul", { class: "artifact-rows" }, (need.artifacts || []).filter((a) => a.role !== "local").map((a) => artifactRow(layer, a)))];
-  if (pkg) {
-    const packageParts = [el("strong", {}, pkg.name), el("p", {}, t("{layer} · {version} · {size} bytes", { layer: name(layer), version: pkg.version, size: pkg.size })),
-      pkg.sha256 ? el("code", { title: pkg.sha256 }, "SHA-256 " + pkg.sha256.slice(0, 12) + "…") : "",
-      pkg.checked ? el("p", { class: "check ok" }, t("Checks passed")) : "",
-      need.comparison ? el("p", { class: need.comparison === "downgrade" ? "check bad" : "check" }, t(COMPARISON_TEXT[need.comparison])) : "",
-      view.state.installed?.layers[layer] ? el("p", { class: "note" }, t("Installed: {version}", { version: displayVersion(layer, view.state.installed.layers[layer]) })) : ""];
-    if (need.artifacts?.some((a) => a.role !== "local")) parts.push(el("details", { class: "package-details" }, [el("summary", {}, t("Package details")), ...packageParts]));
-    else parts.push(...packageParts);
-  } else parts.push(el("p", { class: "needed" }, t("Needed")));
-  if (need.problem && !(need.problem.code === "downgrade" && view.downgrade)) parts.push(el("p", { class: "error-box" }, problemText(t, need.problem)));
-  if (view.rowErrors[layer]) parts.push(el("p", { class: "error-box", role: "alert" }, problemText(t, view.rowErrors[layer])));
-  const fallback = [el("summary", {}, t("Use a local package…")), el("p", { class: "note" }, t("Accepted files: {types}", { types: (need.fileTypes || []).join(" / ") }))];
-  if (view.boot.web && layer !== "base") {
-    const id = "install-path-" + layer;
-    fallback.push(el("label", { for: id }, t("Package path on this computer")), el("input", {
-      id, type: "text", value: view.paths[layer] || "", disabled, spellcheck: "false", autocomplete: "off", autocapitalize: "off",
-      oninput: (event) => { view.paths[layer] = event.target.value; },
-      onkeydown: (event) => { if (event.key === "Enter" && view.paths[layer]?.trim()) { event.preventDefault(); add(layer); } },
-    }));
-  }
-  fallback.push(el("div", { class: "actions" }, [
-    el("button", { id: "pick-" + layer, type: "button", disabled, onclick: () => add(layer) }, t("Choose file…")),
-    pkg ? el("button", { id: "remove-" + layer, type: "button", disabled, "aria-label": t("Remove {name}", { name: pkg.name }),
-      onclick: () => changePackage(layer, () => api("install/packages/" + pkg.id, {}, "DELETE")) }, t("Remove")) : "",
+    layer === "base" && baseKernel() ? el("small", { class: "kernel-version" }, t("Kernel: {version}", { version: baseKernel() })) : "",
+    need.offline && layer !== "base" ? el("p", { class: "offline-package warning" }, t("Not checked against the package list (offline)")) : "",
+    el("ul", { class: "artifact-rows" }, (need.artifacts || []).map((a) => artifactRow(layer, a)))];
+  if (pkg && layer !== "base") parts.push(el("details", { class: "package-details" }, [el("summary", {}, t("Package details")),
+    el("strong", {}, pkg.name), el("p", {}, t("{layer} · {version} · {size} bytes", { layer: name(layer), version: displayVersion(layer, pkg.version), size: pkg.size })),
+    pkg.checked ? el("p", { class: "check ok" }, t("Checks passed")) : "",
+    need.comparison ? el("p", { class: need.comparison === "downgrade" ? "check bad" : "check" }, t(COMPARISON_TEXT[need.comparison])) : "",
   ]));
-  if (layer !== "base") parts.push(el("details", { class: "local-package" }, fallback));
+  if (need.problem && !(need.problem.code === "downgrade" && view.downgrade)) parts.push(el("p", { class: "error-box" }, problemText(t, need.problem)));
   return el("li", { class: "package-row", "data-package-layer": layer }, parts);
+}
+
+function hashView(artifact) {
+  if (!artifact.sha256) return el("p", { class: "note" }, t("Size and SHA-256 will be read from your file."));
+  const full = view.fullHashes.has(artifact.sha256);
+  return el("div", { class: "artifact-hash" }, [el("button", { type: "button", class: "hash-button", title: t("Show and copy full SHA-256"),
+    "aria-label": t("Show and copy full SHA-256"), onclick: () => {
+      view.fullHashes.add(artifact.sha256); navigator.clipboard?.writeText(artifact.sha256).catch(() => {}); render();
+    } }, "SHA-256 " + artifact.sha256.slice(0, 12) + "…"),
+    full ? el("code", { class: "full-hash" }, artifact.sha256) : ""]);
+}
+
+async function chooseFiles(layer = "", role = "") {
+  view.rowErrors = {};
+  const key = layer + "-" + role;
+  return changePackage(key, () => api(view.boot.web ? "artifacts/import" : "artifacts/pick", {
+    choice: view.choice, layer, role, multiple: !layer,
+    ...(view.boot.web ? layer ? { path: (view.artifactPaths[key] || "").trim() } : { paths: parsePaths(view.multiplePaths) } : {}),
+  }));
 }
 
 function artifactRow(layer, artifact) {
   const key = layer + "-" + artifact.role;
   const disabled = view.busy || view.preparing || running();
-  const percent = artifact.size ? Math.min(100, Math.floor(artifact.done/artifact.size*100)) : 0;
-  const parts = [el("div", { class: "artifact-heading" }, [el("strong", {}, artifact.name), el("span", {}, sizeText(artifact.size))])];
-  if (artifact.error) parts.push(el("p", { class: "error-box", role: "status" }, problemText(t, artifact.error)),
-    el("button", { type: "button", disabled, onclick: () => prepare(() => api("artifacts/retry", { layer, role: artifact.role })) }, t("Retry")));
-  else if (artifact.verified) parts.push(el("p", { class: "check ok" }, artifact.status === "cached" ? t("Cached ✓") : t("Verified ✓")));
-  else if (artifact.status === "downloading" || artifact.done > 0) parts.push(
-    el("p", { role: "status" }, t("Downloading: {done} / {total} · {percent}% · {speed}/s", {
-      done: sizeText(artifact.done), total: sizeText(artifact.size), percent, speed: sizeText(artifact.bytesPerSecond || 0) })),
-    el("progress", { value: artifact.done, max: artifact.size, "aria-label": artifact.name }));
-  else parts.push(el("p", { class: "note" }, t("Pending")));
-  const fallback = [el("summary", {}, t("Use a file I downloaded…")), el("p", { class: "note" }, t("Matched by SHA-256; the file name does not matter."))];
-  if (view.boot.web) fallback.push(el("label", { for: "artifact-path-" + key }, t("Package path on this computer")), el("input", {
+  const parts = [el("div", { class: "artifact-heading" }, [el("strong", {}, artifact.name),
+    artifact.size ? el("span", { title: String(artifact.size) + " B" }, sizeText(artifact.size)) : ""]), hashView(artifact),
+    el("div", { class: "artifact-links" }, (artifact.urls || []).map((url, i) => el("a", { href: url, "data-open": "" },
+      /github\.com\/[^/]+\/[^/]+\/releases(?:\/tag\/[^/]+)?$/.test(url) ? t("Release page") : t("Download link {n}", { n: i+1 })))),
+    el("p", { class: artifact.verified ? "check ok" : "note" }, artifact.verified ? t("Verified ✓") : t("Waiting for file")),
+    artifact.path ? el("p", { class: "selected-path" }, artifact.path) : "",
+  ];
+  if (view.boot.web) parts.push(el("label", { for: "artifact-path-" + key }, t("File path on this computer")), el("input", {
     id: "artifact-path-" + key, type: "text", value: view.artifactPaths[key] || "", disabled,
     spellcheck: "false", autocomplete: "off", oninput: (e) => { view.artifactPaths[key] = e.target.value; },
+    onkeydown: (e) => { if (e.key === "Enter" && view.artifactPaths[key]?.trim()) chooseFiles(layer, artifact.role); },
   }));
-  fallback.push(el("button", { type: "button", disabled, onclick: async () => {
-    await changePackage(key, () => api(view.boot.web ? "artifacts/import" : "artifacts/pick", {
-      layer, role: artifact.role, ...(view.boot.web ? { path: (view.artifactPaths[key] || "").trim() } : {}),
-    }));
-    if (!view.rowErrors[key]) await prepare();
-  } }, t("Choose file…")));
-  parts.push(el("details", {}, fallback));
-  if (view.rowErrors[key]) parts.push(el("p", { class: "error-box" }, problemText(t, view.rowErrors[key])));
+  parts.push(el("button", { id: "pick-" + key, type: "button", disabled, onclick: () => chooseFiles(layer, artifact.role) }, t("Choose file…")));
+  if (view.rowErrors[key]) parts.push(el("p", { class: "error-box", role: "alert" }, problemText(t, view.rowErrors[key])));
   return el("li", { class: "artifact-row", "data-artifact": key }, parts);
 }
 
 async function refreshCatalog() {
   view.busy = true; view.error = null; render();
-  try { await api("catalog/fetch", { channel: "beta" }); } catch (error) { view.error = error; }
+  try { await api("catalog/fetch", { channel: "beta" }); } catch (_) { /* Catalog state explains the offline fallback. */ }
   await refresh(); view.busy = false; render();
-  if (view.state?.catalog?.index && view.step === 2) await prepare();
+  if (view.step === 2) await prepare();
 }
 function catalogView() {
   const c = view.state?.catalog;
-  if (c?.status === "fresh") return el("p", { class: "catalog-status check ok" }, t("Package list: up to date ({channel}, #{n})", { channel: c.channel, n: c.index?.sequence || 0 }));
-  if (c?.status === "cached/offline") return el("p", { class: "catalog-status warning" }, t("Package list: offline; using the saved list from {date}", { date: dateText(c.index?.generated || c.updated) }));
-  return el("div", { class: "catalog-status" }, [el("p", { class: c?.status === "failed" ? "error-box" : "note" },
-    c?.status === "failed" ? t("Package list failed: {reason}", { reason: c.reason || "" }) : t("Loading the package list…")),
-    el("button", { type: "button", disabled: view.busy || view.preparing || c?.status === "fetching", onclick: refreshCatalog }, t("Try again"))]);
+  const text = c?.status === "fresh" ? t("Package list: fresh ({channel}, #{n})", { channel: c.channel, n: c.index?.sequence || 0 }) :
+    c?.status === "cached/offline" ? t("Package list: saved copy (offline), from {date}", { date: dateText(c.index?.generated || c.updated) }) :
+      c?.status === "fetching" ? t("Loading the package list…") : t("Package list unavailable. Base files use the profile pins; other packages use their manifests.");
+  return el("div", { class: "catalog-status" }, [el("p", { class: c?.status === "fresh" ? "check ok" : "warning", role: "status" }, text),
+    el("button", { type: "button", disabled: view.busy || view.preparing || c?.status === "fetching", onclick: refreshCatalog }, t("Refresh"))]);
 }
 
 function prepareView() {
   const selected = selectedChoice(view.state, view.choice);
-  return [title(t("Prepare packages")), freshness(view.state?.installedStale), catalogView(),
-    view.totalNotice ? el("p", { class: "download-total", role: "status" }, t("Total download: {size}. Downloads start automatically.", { size: view.totalNotice })) : "",
-    el("ul", { class: "needed-packages" }, neededRows(view.state, view.choice).map(packageRow)),
+  const check = view.state?.fileCheck;
+  const checking = check?.status === "checking";
+  const parts = [title(t("Prepare files")), freshness(view.state?.installedStale), catalogView(),
+    el("p", { class: "file-instructions" }, t("Download each file from its link or any other source you trust. The app checks its SHA-256, so the file name does not matter.")),
+    el("p", { class: "note" }, t("Selected files stay where they are. Keep them available until installation finishes.")),
+  ];
+  if (view.boot.web) parts.push(el("label", { for: "multiple-paths" }, t("Several file paths on this computer (one per line)")), el("textarea", {
+    id: "multiple-paths", rows: 2, value: view.multiplePaths, disabled: view.busy || view.preparing, spellcheck: "false", autocomplete: "off",
+    oninput: (e) => { view.multiplePaths = e.target.value; },
+  }));
+  parts.push(el("button", { id: "pick-several", type: "button", disabled: view.busy || view.preparing, onclick: () => chooseFiles() }, t("Choose several files…")));
+  if (checking) parts.push(el("div", { class: "file-progress", role: "status" }, [
+    el("p", {}, t("Checking {name}: {done} / {total}", { name: check.name, done: sizeText(check.done), total: sizeText(check.total) })),
+    el("progress", { value: check.done, max: check.total || 1, "aria-label": t("Checking files") }),
+    el("button", { id: "cancel-file-check", type: "button", onclick: async () => { receive(await api("artifacts/cancel", {})); } }, t("Cancel checking")),
+  ]));
+  for (const result of view.state?.fileResults || []) {
+    if (result.problem) parts.push(el("p", { class: "error-box file-result", role: "alert" }, problemText(t, result.problem)));
+  }
+  if (view.rowErrors["-"]) parts.push(el("p", { class: "error-box", role: "alert" }, problemText(t, view.rowErrors["-"])));
+  parts.push(el("ul", { class: "needed-packages" }, neededRows(view.state, view.choice).map(packageRow)),
     selected?.downgrade ? el("div", { class: "warning" }, [el("p", {}, t("Warning: this installs an older version.")), el("label", {}, [
       el("input", { id: "install-downgrade", type: "checkbox", checked: view.downgrade, disabled: view.busy,
         onchange: (event) => { view.downgrade = event.target.checked; render(); } }), t("Allow downgrade"),
     ])]) : "",
-    el("div", { class: "actions" }, [back(1), next(3, !view.preparing && canContinue(view.state, view.choice, view.downgrade))])];
+    el("div", { class: "actions" }, [back(1), next(3, !checking && !view.preparing && canContinue(view.state, view.choice, view.downgrade))]));
+  return parts;
 }
 
 function backupView() {
@@ -410,7 +418,7 @@ function confirmation(selected) {
     el("strong", { id: "install-confirm-title" }, t("Start this installation?")),
     el("p", { id: "install-confirm-warning", class: "warning flash-warning", role: "alert" }, t(confirmationWarning(selected))),
     el("p", {}, t("Target: {device}", { device: view.state.target.profile + " · " + (device.usb.serial || device.usb.path?.join(".") || "") })),
-    el("ul", {}, selected.needs.filter((n) => n.package).map((n) => el("li", {}, name(n.layer) + ": " + n.package.version))),
+    el("ul", {}, selected.needs.filter((n) => n.package).map((n) => el("li", {}, [(n.layer === "base" ? "" : name(n.layer) + ": ") + displayVersion(n.layer, n.package.version), n.layer === "base" && baseKernel() ? el("small", { class: "kernel-version" }, t("Kernel: {version}", { version: baseKernel() })) : ""]))),
     has("device") ? el("p", {}, t("Bluetooth restarts and the device reboots once for the device layer.")) : "",
     has("relay") ? el("p", {}, t("The relay restarts.")) : "",
     el("p", {}, t("CarPlay stops for a while. Do not install while driving.")),
@@ -506,23 +514,14 @@ async function importIdentity() {
   if (view.busy) return;
   view.busy = true; view.nextError = null; view.identityMessage = ""; render();
   try {
-    const picked = view.boot.web ? (view.identityPath.trim() ? [view.identityPath.trim()] : []) : (await api("identity/pick", {})).paths || [];
-    for (const path of picked) {
-      if (/\.zip$/i.test(path)) view.identityPaths = [path];
-      else {
-        if (!["identity.pk8", "certificate.p7b"].includes(path.split(/[\\/]/).at(-1))) throw { code: "identity-name" };
-        view.identityPaths = view.identityPaths.filter((old) => !/\.zip$/i.test(old) && old.split(/[\\/]/).at(-1) !== path.split(/[\\/]/).at(-1));
-        view.identityPaths.push(path);
-      }
-    }
-    view.identityPath = "";
-    const selection = identitySelection(view.identityPaths);
-    if (!selection.ready) view.nextError = { code: "identity-missing", detail: selection.missing };
-    else {
+    const picked = view.boot.web ? parsePaths(view.identityPath) : (await api("identity/pick", {})).paths || [];
+    if (picked.length) {
+      view.identityPaths = [...new Set([...view.identityPaths, ...picked])];
+      view.identityPath = "";
       receive(await api("identity/import", { paths: view.identityPaths }));
       view.identityPaths = []; view.identityMessage = t("Identity added");
     }
-  } catch (error) { view.nextError = error; }
+  } catch (error) { view.nextError = error; if (error.code !== "identity-missing") view.identityPaths = []; }
   view.busy = false; render();
 }
 
@@ -548,11 +547,13 @@ function nextStepsCard() {
     el("button", { type: "button", disabled: view.busy, onclick: backToLayers }, t("Back to layers")),
     el("a", { href: lang() === "zh-CN" ? "https://openxplay.org/ufi003-relay#step-network" : "https://openxplay.org/en/ufi003-relay#step-network", "data-open": "" }, t("Continue with network setup")),
   ]);
-  if (next.identity === "present") parts.push(el("p", { class: "check ok", role: "status" }, t("Identity added")));
+  if (next.identity === "present") parts.push(el("div", { class: "identity-success result ok", role: "status" }, [
+    el("strong", {}, t("Identity added")), el("p", {}, t("Files: {files}", { files: "identity.pk8 · certificate.p7b" })),
+  ]));
   else {
-    parts.push(el("h3", {}, t("Add your CarPlay identity")), el("p", {}, t("Choose identity.pk8 and certificate.p7b together or one after the other, in any order, or a ZIP containing both.")));
-    if (view.boot.web) parts.push(el("label", { for: "identity-path" }, t("Path to an identity file or ZIP on this computer")), el("input", {
-      id: "identity-path", type: "text", value: view.identityPath, disabled, spellcheck: "false", autocomplete: "off",
+    parts.push(el("h3", {}, t("Add your CarPlay identity")), el("p", {}, t("Choose the private key and certificate together or one after the other, in any order (DER or PEM; any file names), or a ZIP containing identity.pk8 and certificate.p7b.")));
+    if (view.boot.web) parts.push(el("label", { for: "identity-path" }, t("Paths to identity files or a ZIP on this computer (one per line)")), el("textarea", {
+      id: "identity-path", rows: 2, value: view.identityPath, disabled, spellcheck: "false", autocomplete: "off",
       oninput: (e) => { view.identityPath = e.target.value; },
     }));
     if (view.identityPaths.length) parts.push(el("p", { class: "note" }, view.identityPaths.map((p) => p.split(/[\\/]/).at(-1)).join(" · ")));
@@ -583,7 +584,7 @@ export function render() {
   if (!root) return;
   const focused = root.contains(document.activeElement) ? document.activeElement.id : "";
   const input = document.activeElement;
-  const selection = input?.tagName === "INPUT" || focused.startsWith("install-path-") ? [input.selectionStart, input.selectionEnd] : null;
+  const selection = input?.tagName === "INPUT" || input?.tagName === "TEXTAREA" ? [input.selectionStart, input.selectionEnd] : null;
   const log = document.getElementById("install-log-text");
   const logScroll = log?.scrollTop || 0;
   const atEnd = !log || log.scrollHeight - log.scrollTop - log.clientHeight < 20;
@@ -598,6 +599,9 @@ export function render() {
   if (view.state?.problem) parts.unshift(el("p", { class: "error-box", role: "status" }, problemText(t, view.state.problem)));
   if (view.error) parts.push(el("p", { class: "error-box", role: "alert" }, problemText(t, view.error)));
   root.replaceChildren(...parts);
+  for (const [id, value] of [["multiple-paths", view.multiplePaths], ["identity-path", view.identityPath]]) {
+    const input = document.getElementById(id); if (input) input.value = value;
+  }
   if (focused) { const again = document.getElementById(focused); if (again && !again.disabled) again.focus(); }
   if (selection) document.getElementById(focused)?.setSelectionRange(...selection);
   const freshLog = document.getElementById("install-log-text");

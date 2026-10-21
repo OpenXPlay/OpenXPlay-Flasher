@@ -8,7 +8,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/ed25519"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -40,6 +41,7 @@ type guidedDevice struct {
 	mu                                        sync.Mutex
 	commands                                  []string
 	sizes                                     map[string]int
+	credentialViews                           [][]byte
 	reportedSerial                            string
 	badSize                                   bool
 	private, restarted, failWrite, failVerify bool
@@ -96,6 +98,10 @@ func (d *guidedDevice) Push(_ context.Context, path string, data []byte, mode fs
 	if !d.private || mode != 0o600 || !strings.HasPrefix(path, "/var/lib/openxplay/mfi/.import-") {
 		return errors.New("unsafe credential staging")
 	}
+	if len(data) == 0 || data[0] != 0x30 {
+		return errors.New("identity payload must be DER")
+	}
+	d.credentialViews = append(d.credentialViews, data)
 	d.sizes[filepath.Base(path)] = len(data)
 	return nil
 }
@@ -116,10 +122,12 @@ func (d *guidedDevice) OpenTCP(ctx context.Context, port int) (io.ReadWriteClose
 type guidedNative struct {
 	*fakeNative
 	identity         []string
+	artifacts        []string
 	artifact, backup string
 }
 
 func (n *guidedNative) OpenIdentity() ([]string, error)   { return n.identity, nil }
+func (n *guidedNative) OpenArtifacts() ([]string, error)  { return n.artifacts, nil }
 func (n *guidedNative) OpenArtifact() (string, error)     { return n.artifact, nil }
 func (n *guidedNative) OpenBackupFolder() (string, error) { return n.backup, nil }
 func guidedFixture(t *testing.T) (fixture, *app.Service, *guidedDevice, *guidedNative) {
@@ -135,7 +143,7 @@ func guidedFixture(t *testing.T) (fixture, *app.Service, *guidedDevice, *guidedN
 func jsonBody(v any) string { b, _ := json.Marshal(v); return string(b) }
 func identityFiles(t *testing.T) []string {
 	t.Helper()
-	_, key, err := ed25519.GenerateKey(rand.Reader)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,9 +409,25 @@ type guiCatalog struct {
 	index   *catalog.Index
 	err     error
 	offline bool
+	client  *http.Client
 }
 
-func (c *guiCatalog) Fetch(context.Context, string) (*catalog.Index, error) { return c.index, c.err }
+func (c *guiCatalog) Fetch(ctx context.Context, channel string) (*catalog.Index, error) {
+	if c.client != nil {
+		for _, name := range []string{"index.json", "index.json.minisig"} {
+			req, err := http.NewRequestWithContext(ctx, "GET", "https://fixture.invalid/flasher/"+channel+"/"+name, nil)
+			if err != nil {
+				return nil, err
+			}
+			res, err := c.client.Do(req)
+			if err != nil {
+				return nil, err
+			}
+			res.Body.Close()
+		}
+	}
+	return c.index, c.err
+}
 func (c *guiCatalog) LoadCached(context.Context, string) (*catalog.Index, error) {
 	return c.index, c.err
 }
@@ -430,22 +454,65 @@ func TestCatalogPrepareArtifactRoutes(t *testing.T) {
 		artifacts = append(artifacts, catalog.Artifact{Role: role, Name: name, Size: int64(len(data)), SHA256: digestBytes(data), URLs: []string{"https://fixture.invalid/" + name}})
 	}
 	source := &guiCatalog{index: &catalog.Index{Schema: catalog.Schema, Channel: "beta", Sequence: 7, Generated: "2026-10-21T00:00:00Z", Devices: map[string]catalog.Device{"ufi003": {Recommended: map[string]string{"relay": "0.1.5~beta.1"}, Layers: []catalog.Layer{{Layer: "relay", Version: "0.1.5~beta.1", Artifacts: artifacts}}}}}}
-	dir := t.TempDir()
+
+	requests := 0
 	client := &http.Client{Transport: guiRoundTrip(func(r *http.Request) (*http.Response, error) {
-		data := files[r.URL.Path]
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(data)), ContentLength: int64(len(data))}, nil
+		if r.URL.Host != "fixture.invalid" || r.URL.Path != "/flasher/beta/index.json" && r.URL.Path != "/flasher/beta/index.json.minisig" {
+			t.Errorf("non-catalog network request: %s", r.URL)
+			return nil, errors.New("packages must never be fetched")
+		}
+		requests++
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("catalog fixture")), Header: http.Header{}}, nil
 	})}
-	svc.ConfigureStorage(filepath.Join(dir, "data"), filepath.Join(dir, "cache"), filepath.Join(dir, "backups"), source, catalog.NewCache(filepath.Join(dir, "cache"), nil, client))
+	source.client = client
+	previousClient := http.DefaultClient
+	previousTransport := http.DefaultTransport
+	http.DefaultClient, http.DefaultTransport = client, client.Transport
+	t.Cleanup(func() { http.DefaultClient, http.DefaultTransport = previousClient, previousTransport })
+	dir := t.TempDir()
+
+	svc.ConfigureStorage(filepath.Join(dir, "data"), filepath.Join(dir, "cache"), filepath.Join(dir, "backups"), source)
 	if rec := f.do("GET", "/api/catalog", ""); rec.Code != 200 {
 		t.Fatal("catalog status route")
 	}
 	if rec := f.do("POST", "/api/catalog/fetch", `{"channel":"beta"}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"sequence":7`) {
 		t.Fatalf("fetch: %d %s", rec.Code, rec.Body)
 	}
+
+	if requests != 2 {
+		t.Fatalf("catalog requests = %d", requests)
+	}
+	rec := f.do("POST", "/api/install/prepare", `{"choice":"relay"}`)
+	if rec.Code != 200 {
+		t.Fatalf("waiting Prepare: %d %s", rec.Code, rec.Body)
+	}
+	var waiting app.InstallState
+	if err := json.Unmarshal(rec.Body.Bytes(), &waiting); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range waiting.Choices {
+		if c.ID == "relay" {
+			if c.Ready || len(c.Needs[0].Artifacts) != 2 {
+				t.Fatal("waiting rows missing")
+			}
+			for _, a := range c.Needs[0].Artifacts {
+				if len(a.URLs) != 2 || a.Verified || a.Status != "waiting" {
+					t.Fatalf("waiting row %+v", a)
+				}
+			}
+		}
+	}
+	if requests != 2 {
+		t.Fatal("Prepare fetched a package")
+	}
 	wrong := filepath.Join(t.TempDir(), "wrong")
 	os.WriteFile(wrong, []byte("wrong"), 0o600)
-	if rec := f.do("POST", "/api/artifacts/import", jsonBody(map[string]string{"layer": "relay", "role": "deb", "path": wrong})); rec.Code != 409 || errorCode(t, rec.Body.Bytes()) != "artifact-mismatch" {
+	if rec := f.do("POST", "/api/artifacts/import", jsonBody(map[string]string{"layer": "relay", "role": "deb", "path": wrong})); rec.Code != 409 || errorCode(t, rec.Body.Bytes()) != "unmatched-file" {
 		t.Fatal("wrong artifact accepted")
+	}
+
+	if rec := f.do("POST", "/api/artifacts/retry", `{}`); rec.Code != 404 {
+		t.Fatal("download retry API still exists")
 	}
 	for _, a := range artifacts {
 		filename := filepath.Join(t.TempDir(), "any-name")
@@ -457,7 +524,7 @@ func TestCatalogPrepareArtifactRoutes(t *testing.T) {
 			t.Fatalf("artifact picker: %d %s", rec.Code, rec.Body)
 		}
 	}
-	for _, path := range []string{"/api/install/prepare", "/api/artifacts/retry"} {
+	for _, path := range []string{"/api/install/prepare"} {
 		body := `{"choice":"relay"}`
 		if strings.Contains(path, "retry") {
 			body = `{"layer":"relay","role":"deb"}`
@@ -468,6 +535,13 @@ func TestCatalogPrepareArtifactRoutes(t *testing.T) {
 	}
 	if rec := f.do("GET", "/api/artifacts", ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"verified":true`) {
 		t.Fatalf("artifact progress: %d %s", rec.Code, rec.Body)
+	}
+
+	if requests != 2 {
+		t.Fatal("picking files or preparing used the network")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "cache")); !os.IsNotExist(err) {
+		t.Fatalf("picked files copied into cache: %v", err)
 	}
 	source.offline = true
 	if rec := f.do("POST", "/api/catalog/fetch", `{}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), "cached/offline") {
@@ -486,7 +560,7 @@ func TestBackupFolderAndImportRoutes(t *testing.T) {
 	f, svc, _, n := guidedFixture(t)
 	dir := t.TempDir()
 	cacheDir := filepath.Join(dir, "cache")
-	svc.ConfigureStorage(filepath.Join(dir, "data"), cacheDir, filepath.Join(dir, "backups"), nil, nil)
+	svc.ConfigureStorage(filepath.Join(dir, "data"), cacheDir, filepath.Join(dir, "backups"), nil)
 	p := svc.Profiles()[0]
 	if p.ID != "ufi003" {
 		t.Fatal("fixture profile")

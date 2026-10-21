@@ -317,6 +317,9 @@ func (e *Executor) step(ctx context.Context, s Step, pkg *Package) error {
 	case "prepare":
 		return e.command(stepCtx, "umask 077; mkdir -p "+quote(m.DeviceDir), "")
 	case "push":
+		if err := pkg.Recheck(stepCtx); err != nil {
+			return err
+		}
 		e.log("Push " + pkg.filename + " -> " + remote + "\n")
 		return e.dev.Push(stepCtx, remote, pkg.data, 0o644)
 	case "checksum":

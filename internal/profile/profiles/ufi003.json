@@ -26,8 +26,8 @@
     {
       "id": "base",
       "name": {
-        "en": "Base system (OpenStick Debian 11)",
-        "zh-CN": "基础系统（OpenStick Debian 11）"
+        "en": "OpenStick v1",
+        "zh-CN": "OpenStick v1"
       },
       "transport": "fastboot",
       "destructive": true,

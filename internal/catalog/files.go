@@ -74,6 +74,11 @@ func WriteFile(ctx context.Context, path string, data []byte, mode os.FileMode) 
 
 // Hash reads a regular local file with a size cap. It is also used by the maintainer's builder.
 func Hash(ctx context.Context, path string) (int64, string, error) {
+	return HashProgress(ctx, path, nil)
+}
+
+// HashProgress reports bytes hashed and honors cancellation between bounded reads.
+func HashProgress(ctx context.Context, path string, progress ProgressFunc) (int64, string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, "", err
@@ -90,7 +95,7 @@ func Hash(ctx context.Context, path string) (int64, string, error) {
 		return 0, "", ErrTooLarge
 	}
 	h := sha256.New()
-	n, err := io.Copy(h, io.LimitReader(contextReader{ctx, f}, MaxArtifactSize+1))
+	n, err := io.Copy(h, io.LimitReader(contextReader{ctx, &hashReader{r: f, total: st.Size(), progress: progress}}, MaxArtifactSize+1))
 	if n > MaxArtifactSize {
 		return 0, "", ErrTooLarge
 	}
@@ -126,4 +131,19 @@ func VerifyContext(ctx context.Context, path string, a Artifact) error {
 		return &IntegrityError{a.Name, "wrong size or SHA-256"}
 	}
 	return nil
+}
+
+type hashReader struct {
+	r           io.Reader
+	done, total int64
+	progress    ProgressFunc
+}
+
+func (r *hashReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	r.done += int64(n)
+	if r.progress != nil {
+		r.progress(Progress{Done: r.done, Total: r.total})
+	}
+	return n, err
 }

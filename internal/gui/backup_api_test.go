@@ -20,7 +20,7 @@ import (
 func TestBackupMetadataRoutes(t *testing.T) {
 	f := newFixture(t)
 	dir := t.TempDir()
-	f.service.ConfigureStorage(filepath.Join(dir, "data"), filepath.Join(dir, "cache"), filepath.Join(dir, "backups"), nil, nil)
+	f.service.ConfigureStorage(filepath.Join(dir, "data"), filepath.Join(dir, "cache"), filepath.Join(dir, "backups"), nil)
 	sets := []string{"20261021T010203Z", "20261021T010204Z"}
 	for i, set := range sets {
 		b := base.Backup{Schema: base.BackupSchema, Set: set, Profile: "ufi003", Serial: "board1", Created: time.Date(2026, 10, 21, 1, 2, 3+i, 0, time.UTC), FlasherVersion: "test", Partitions: map[string]base.Partition{}}

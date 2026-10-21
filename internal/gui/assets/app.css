@@ -1,7 +1,7 @@
 /*
 SPDX-FileCopyrightText: 2026 OpenXPlay.org
 SPDX-License-Identifier: AGPL-3.0-only
-Created by riko chen on 2026-10-20
+Created by riko chen on 2026-10-21
 */
 
 :root {
@@ -526,3 +526,23 @@ progress { width: 100%; height: 10px; accent-color: var(--accent); }
   .layer-row { grid-template-columns: 1fr; }
   .stale { align-items: start; flex-direction: column; }
 }
+
+/* File selection and grouped installation choices. */
+.update-layers { display: grid; gap: 12px; margin-top: 20px; }
+.reflash-choices { margin-top: 20px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.reflash-choices[open] { display: grid; gap: 12px; }
+.reflash-choices summary { font-weight: 600; cursor: pointer; }
+.kernel-version { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.file-instructions { line-height: 1.6; }
+.artifact-heading strong { overflow-wrap: anywhere; }
+.artifact-links { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; }
+.artifact-hash { display: grid; gap: 8px; }
+.hash-button { justify-self: start; font-family: ui-monospace, monospace; font-size: 12px; padding: 3px 6px; }
+.full-hash, .selected-path { overflow-wrap: anywhere; font-size: 12px; }
+.selected-path { color: var(--muted); }
+.artifact-row > button { justify-self: start; }
+.file-progress { padding: 12px; border: 1px solid var(--accent); border-radius: 8px; display: grid; gap: 8px; }
+#multiple-paths, #identity-path { width: 100%; box-sizing: border-box; }
+#pick-several { margin: 10px 0 18px; }
+.identity-success.result.ok { padding: 18px; border: 1px solid var(--accent); font-size: 15px; }
+.identity-success strong { display: block; font-size: 18px; margin-bottom: 6px; }

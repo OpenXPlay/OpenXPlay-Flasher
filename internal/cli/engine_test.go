@@ -26,7 +26,7 @@ func engineFixture(t *testing.T) (*app.Service, *cliDevice, string) {
 	dir := t.TempDir()
 	source := catalog.NewSource(dir, "test", nil)
 	source.BaseURLs = nil
-	svc.ConfigureStorage(filepath.Join(dir, "data"), filepath.Join(dir, "cache"), filepath.Join(dir, "backups"), source, nil)
+	svc.ConfigureStorage(filepath.Join(dir, "data"), filepath.Join(dir, "cache"), filepath.Join(dir, "backups"), source)
 	old := commandService
 	commandService = func(bool, app.Events) (*app.Service, func(), error) { return svc, func() { svc.Stop() }, nil }
 	t.Cleanup(func() { commandService = old })
@@ -38,7 +38,7 @@ func TestCLIBackupSetsAndRepairSource(t *testing.T) {
 	dir := t.TempDir()
 	source := catalog.NewSource(filepath.Join(dir, "data"), "test", nil)
 	source.BaseURLs = nil
-	svc.ConfigureStorage(filepath.Join(dir, "data"), filepath.Join(dir, "cache"), filepath.Join(dir, "backups"), source, nil)
+	svc.ConfigureStorage(filepath.Join(dir, "data"), filepath.Join(dir, "cache"), filepath.Join(dir, "backups"), source)
 	sets := []string{"20261021T010203Z", "20261021T010204Z"}
 	for i, set := range sets {
 		b := base.Backup{Schema: base.BackupSchema, Set: set, Profile: "ufi003", Serial: "board1", Created: time.Date(2026, 10, 21, 1, 2, 3+i, 0, time.UTC), FlasherVersion: "test", Partitions: map[string]base.Partition{}}
@@ -144,5 +144,20 @@ func TestCLIEngineArguments(t *testing.T) {
 	got := interspersed([]string{"import", "folder", "--serial", "board1", "--json"})
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("parsed %v", got)
+	}
+}
+
+func TestDownloadCommandRemovedAndHelpDescribesLocalFiles(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Main([]string{"download", "--layer", "relay"}, &out, &errOut); code != 2 {
+		t.Fatalf("removed command exit %d", code)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Main([]string{"help"}, &out, &errOut); code != 0 {
+		t.Fatal(code)
+	}
+	if strings.Contains(out.String(), "download --layer") || !strings.Contains(out.String(), "Packages are never downloaded") || !strings.Contains(out.String(), "不复制文件") {
+		t.Fatal("help still describes downloads")
 	}
 }

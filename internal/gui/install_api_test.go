@@ -266,7 +266,7 @@ func TestInstallPackageAndJobRoutes(t *testing.T) {
 func TestInstallRefusalsAndDowngrade(t *testing.T) {
 	f, _, bus, dev, _ := installFixture(t, true)
 	deb, _ := relayFiles(t)
-	if rec := f.do("POST", "/api/install/packages", bodyPath(deb+".missing")); rec.Code != http.StatusUnprocessableEntity || errorCode(t, rec.Body.Bytes()) != "package" {
+	if rec := f.do("POST", "/api/install/packages", bodyPath(deb+".missing")); rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != "file-read" {
 		t.Fatalf("bad package=%d %s", rec.Code, rec.Body)
 	}
 	f.do("POST", "/api/install/packages", bodyPath(deb))
@@ -367,7 +367,7 @@ func TestLayerChoiceAPIWithoutPackages(t *testing.T) {
 				dev.version = ""
 			}
 			s := installState(t, f)
-			if len(s.Layers) != 3 || len(s.Choices) != 6 || s.Suggested != tc.suggested || len(s.Packages) != 0 {
+			if len(s.Layers) != 3 || len(s.Choices) != 5 || s.Suggested != tc.suggested || len(s.Packages) != 0 {
 				t.Fatalf("state=%+v", s)
 			}
 			if s.Layers[0].Action != "install" || s.Layers[0].Choice != "base" || s.Layers[0].Name["zh-CN"] == "" {

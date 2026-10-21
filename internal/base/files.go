@@ -24,8 +24,8 @@ import (
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
 )
 
-// ArchiveProvider may use a signed catalog, imported archives, or both. Files checks its answer
-// against the profile pins as well; a provider cannot substitute another base release.
+// ArchiveProvider resolves user-selected archives. Files checks its answer against the profile
+// pins as well; a provider cannot substitute another base release.
 type ArchiveProvider interface {
 	Resolve(context.Context, string, profile.Archive, catalog.ProgressFunc) (string, string, error)
 }
@@ -170,6 +170,11 @@ func (f *Files) prepare(ctx context.Context, authorOnly bool) error {
 			for _, id := range slices.Sorted(maps.Keys(b.Files)) {
 				pin := b.Files[id]
 				if authorOnly || pin.Archive != role {
+					continue
+				}
+
+				if pin.Member == "" {
+					f.paths[id] = path
 					continue
 				}
 				dest := filepath.Join(root, id+".img")

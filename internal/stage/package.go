@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-21
 
 // Package stage validates layer packages, plans installations and runs them over adb. A package
-// is independent of its source: local files and catalog downloads use the same checked payload.
+// is independent of its source: user-selected files use the same checked payload.
 package stage
 
 import (
@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +23,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/catalog"
 )
 
 const Schema = "org.openxplay.flash-stage/1"
@@ -88,6 +91,7 @@ type Package struct {
 	filename string
 	digest   string
 	data     []byte
+	sources  []LocalFile
 }
 
 type PackageInfo struct {
@@ -138,6 +142,9 @@ func Open(filename string) (*Package, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrPackage, err)
 	}
+	if len(p.sources) == 0 {
+		p.sources = []LocalFile{{Path: filename, Size: int64(len(p.data)), SHA256: p.digest}}
+	}
 	return p, nil
 }
 
@@ -166,6 +173,7 @@ func openRelay(filename string) (*Package, error) {
 		}
 		if picked != nil {
 			if p, err := RelayPackage(metadata, picked); err == nil {
+				p.sources = []LocalFile{{Path: manifestPath, Size: int64(len(metadata)), SHA256: digest(metadata)}, {Path: filename, Size: int64(len(picked)), SHA256: digest(picked)}}
 				return p, nil
 			}
 			continue
@@ -179,6 +187,7 @@ func openRelay(filename string) (*Package, error) {
 				continue
 			}
 			if p, err := RelayPackage(metadata, data); err == nil {
+				p.sources = []LocalFile{{Path: manifestPath, Size: int64(len(metadata)), SHA256: digest(metadata)}, {Path: candidate, Size: int64(len(data)), SHA256: digest(data)}}
 				return p, nil
 			}
 		}
@@ -305,7 +314,7 @@ func RelayPackage(metadata, data []byte) (*Package, error) {
 	if m.Stage != "relay" || len(data) == 0 || len(data) > MaxPackage || !strings.EqualFold(digest(data), m.SHA256) {
 		return nil, fmt.Errorf("%w: relay checksum mismatch", ErrPackage)
 	}
-	return &Package{m, m.File, digest(data), data}, nil
+	return &Package{manifest: m, filename: m.File, digest: digest(data), data: data}, nil
 }
 
 // DevicePackage hashes regular entries without keeping their unpacked bytes. Nothing is extracted
@@ -430,5 +439,35 @@ func devicePackage(data []byte) (*Package, error) {
 			return nil, fmt.Errorf("package checksum mismatch: %s", d.File)
 		}
 	}
-	return &Package{m, m.Name + ".tar.gz", digest(data), data}, nil
+	return &Package{manifest: m, filename: m.Name + ".tar.gz", digest: digest(data), data: data}, nil
+}
+
+// LocalFile binds a validated package to the files chosen by the user, without copying them.
+type LocalFile struct {
+	Path   string
+	Size   int64
+	SHA256 string
+}
+
+func (p *Package) SetLocalFiles(files []LocalFile) { p.sources = append([]LocalFile(nil), files...) }
+func (p *Package) LocalFiles() []LocalFile         { return append([]LocalFile(nil), p.sources...) }
+
+// Recheck detects changes to a payload or its manifest immediately before use.
+func (p *Package) Recheck(ctx context.Context) error {
+	for _, f := range p.sources {
+		n, sum, err := catalog.Hash(ctx, f.Path)
+		if err != nil || n != f.Size || sum != f.SHA256 {
+			return &Problem{Code: "file-changed", Detail: filepath.Base(f.Path)}
+		}
+	}
+	return nil
+}
+
+// RelayManifest validates the existing manifest format without requiring its payload yet.
+func RelayManifest(data []byte) (Manifest, error) {
+	m, err := parseManifest(data)
+	if err == nil && m.Stage != "relay" {
+		err = ErrPackage
+	}
+	return m, err
 }

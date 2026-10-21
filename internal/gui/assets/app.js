@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: AGPL-3.0-only
-// Created by riko chen on 2026-10-20
+// Created by riko chen on 2026-10-21
 
 // The page talks to Go only through /api (JSON over the app's own handler) and polls for state, so
 // it runs the same in the app window, in a browser (openxplay-flasher web) and in tests.
@@ -224,10 +224,6 @@ async function follow() {
 }
 
 function openLink(url) {
-  if (boot.web) {
-    window.open(url, "_blank", "noopener");
-    return;
-  }
   api("open", { url }).catch((err) => console.error(err));
 }
 

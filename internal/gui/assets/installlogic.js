@@ -58,7 +58,6 @@ export const ERROR_TEXT = {
   "journal-invalid": "The saved job journal is invalid. Preserve it and check the device before continuing.",
   "catalog-unavailable": "The signed catalog is unavailable. Fetch it again or import verified files.",
   "catalog-package": "The checked package does not match the catalog layer: {detail}.",
-  "download": "The package could not be downloaded or verified: {detail}.",
   "base": "Base installation stopped: {detail}.",
   "base-files": "Prepare all pinned base archives before starting.",
   "base-unavailable": "This device profile has no base installer.",
@@ -95,15 +94,24 @@ export const ERROR_TEXT = {
   "usb": "Cannot read USB devices",
   "bad-choice": "Choose an available install plan.",
   "no-dialogs": "Enter the package path on this computer.",
-  "artifact-mismatch": "This file does not match the size and SHA-256 for {detail}. Choose the downloaded artifact for this row.",
   "backup-folder": "The backup folder has not been created yet.",
+  "file-read": "Could not read this file: {detail}. Choose a regular file within the size limit.",
+  "file-changed": "This file changed after it was selected: {detail}. Choose it again before continuing.",
+  "file-cancelled": "File checking cancelled: {detail}.",
+  "unmatched-file": "This file is not one of the files listed here: {detail}.",
+  "catalog-unknown": "This package is not in the package list. The list includes these versions: {detail}.",
+  "catalog-no-versions": "The package list has no versions for {detail}.",
+  "identity-unrecognized": "This file is not a recognized PKCS #8 private key or PKCS #7 / CMS certificate (DER or PEM).",
+  "identity-key-format": "EC PRIVATE KEY is not PKCS #8. Choose a P-256 PKCS #8 private key (PRIVATE KEY in PEM).",
+  "identity-key-type": "The PKCS #8 private key must be an EC key; this key uses another algorithm.",
+  "identity-key-curve": "The EC private key must use the P-256 curve.",
+  "identity-encrypted": "The ZIP entry {detail} is encrypted. Choose an unencrypted identity file.",
   "identity-missing": "Missing {detail}. Select both identity.pk8 and certificate.p7b, or a ZIP containing them.",
   "identity-duplicate": "There is more than one {detail}. Select only one copy of each file.",
   "identity-read": "Could not read {detail}, or it exceeds 4 MiB. Choose a regular file.",
   "identity-zip": "The ZIP could not be opened. Choose the two identity files or a valid ZIP.",
-  "identity-name": "Choose identity.pk8 and certificate.p7b, or a ZIP containing them.",
-  "identity-key": "identity.pk8 is not a valid PKCS #8 DER private key.",
-  "identity-certificate": "certificate.p7b is not a valid PKCS #7 / CMS SignedData DER file.",
+  "identity-key": "The private key is not valid PKCS #8 data (DER or PEM).",
+  "identity-certificate": "The certificate is not valid PKCS #7 / CMS SignedData (DER or PEM).",
   "identity-write": "The identity could not be added. Keep the device connected and try again with both files.",
   "identity-status": "Could not confirm the identity files on the device. Keep it connected and try again.",
   "relay-missing": "Install the OpenXPlay relay before continuing.",
@@ -114,7 +122,7 @@ export const ERROR_TEXT = {
 };
 
 export const LEFT_TEXT = {
-  "unchanged": "No layer install was started; package files may remain in the cache.",
+  "unchanged": "No layer install was started; your selected files remain in their original locations.",
   "partial": "Some layers may have changed. Check the installed versions and log before retrying.",
   "previous-relay": "The previous relay is running; other completed layers remain installed.",
 };
@@ -170,8 +178,7 @@ export function canContinue(state, id, downgrade = false, busy = false) {
 
 export function artifactsVerified(need) {
   const artifacts = need.artifacts || [];
-  const local = artifacts.find((a) => a.role === "local" && a.sha256 === need.package?.sha256);
-  return local ? local.verified && !local.error : artifacts.every((a) => a.verified && !a.error);
+  return artifacts.every((a) => a.verified && !a.error);
 }
 
 export function serialFor(state, id) {
@@ -214,6 +221,7 @@ export function guardBeforeUnload(event, state) {
 }
 
 export function displayVersion(layer, version) {
+  if (layer === "base" && version) return /^openstick-/i.test(version) ? "OpenStick " + version.slice(10) : "OpenStick v1";
   return layer === "relay" ? version.replace("~", "-") : version;
 }
 
@@ -241,12 +249,38 @@ export function phase(state, step = 0) {
 
 export function suggestedAction(state) {
   if (!state) return "";
+  const has = (id) => (state.choices || []).some((c) => c.id === id);
   const mode = state.identity?.mode || state.target?.device?.mode;
-  if (mode === "stock") return "stock";
-  if (mode === "fastboot" && state.resume && !state.resume.finished) return "repair";
-  if (state.installed?.layers?.base && !state.installed.layers.device) return "full";
-  if (state.installed?.layers?.relay && state.installed.layers.device) return "relay";
+  if ((mode === "stock" || state.suggested === "stock") && has("stock")) return "stock";
+  if ((mode === "fastboot" || state.resume && !state.resume.finished) && has("repair")) return "repair";
+  if (state.installed?.layers?.base && !state.installed.layers.device && has("full")) return "full";
+  if (state.installed?.layers?.relay && state.installed.layers.device && has("relay")) return "relay";
   return state.suggested || "";
+}
+
+export function choiceGroups(state) {
+  const suggestion = suggestedAction(state);
+  const choices = state?.choices || [];
+  const stock = suggestion === "stock";
+  return {
+    suggested: choices.find((c) => c.id === suggestion),
+    updates: stock ? [] : choices.filter((c) => ["device", "relay", "full"].includes(c.id) && c.id !== suggestion),
+    reflash: stock ? [] : choices.filter((c) => ["base", "full-reinstall", "repair"].includes(c.id) && c.id !== suggestion),
+  };
+}
+
+export const CHOICE_TEXT = {
+  "stock": "Installs OpenStick v1, device support and the relay, replacing the original firmware.",
+  "full": "Installs device support and the relay in order; keeps the base system.",
+  "device": "Updates device support and restarts the device once.",
+  "relay": "Updates the relay and restarts it.",
+  "base": "Reinstalls OpenStick v1 and erases settings, identities and pairings.",
+  "full-reinstall": "Reinstalls OpenStick v1, device support and the relay; erases settings, identities and pairings.",
+  "repair": "Repairs an interrupted installation or a device in fastboot; erases its system and data.",
+};
+
+export function parsePaths(value) {
+  return value.split(/\r?\n/).map((p) => p.trim().replace(/^["'](.*)["']$/, "$1")).filter(Boolean);
 }
 
 export const PHASE_TEXT = {
@@ -284,13 +318,6 @@ export function nextStepsState(state) {
   return { relay, connected: !!state?.target && !state?.problem,
     identity: next.serial === serial ? next.identity || "unknown" : "unknown",
     forward: next.forward?.active && next.forward.serial === serial ? next.forward : null };
-}
-
-export function identitySelection(paths) {
-  if (paths.some((p) => /\.zip$/i.test(p))) return { ready: true, missing: "" };
-  const names = paths.map((p) => p.split(/[\\/]/).at(-1));
-  const missing = ["identity.pk8", "certificate.p7b"].find((n) => !names.includes(n)) || "";
-  return { ready: !missing, missing };
 }
 
 export function sizeText(bytes) {

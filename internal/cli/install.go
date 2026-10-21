@@ -106,7 +106,7 @@ func runInstall(svc *app.Service, files []string, only string, downgrade, yes bo
 	for _, id := range []string{"base", "device", "relay"} {
 		fmt.Fprintf(stdout, "  %s: %s\n", id, job.Installed.Layers[id])
 	}
-	fmt.Fprintln(stdout, "Next: open the relay admin page on port 6975 (USB forwarding comes later).")
+	fmt.Fprintln(stdout, "Next: add identity.pk8 and certificate.p7b in the relay admin page, then set up networking. / 下一步：在中继管理页面添加 identity.pk8 和 certificate.p7b，再配置网络。")
 	return 0
 }
 

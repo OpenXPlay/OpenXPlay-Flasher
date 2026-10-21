@@ -76,9 +76,6 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "print JSON / 输出 JSON")
 	channel := fs.String("channel", "beta", "catalog channel / 目录频道")
-	layer := fs.String("layer", "", "base, device or relay / 基础、设备或中继层")
-	version := fs.String("version", "", "catalog version / 目录版本")
-	profileID := fs.String("profile", "ufi003", "device profile / 设备配置")
 	serial := fs.String("serial", "", "board serial / 设备序列号")
 	basePlan := fs.String("base-plan", "", "repair: rebuild the chain during full reinstall / 完整重装时重建引导链")
 	choice := fs.String("choice", "", "stock, base, full-reinstall, repair, full, device or relay / 安装方案")
@@ -96,10 +93,6 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 	switch cmd {
 	case "catalog":
 		if len(positional) != 1 || positional[0] != "fetch" && positional[0] != "show" {
-			return usageError()
-		}
-	case "download":
-		if len(positional) != 0 || *layer != "base" && *layer != "device" && *layer != "relay" {
 			return usageError()
 		}
 	case "import":
@@ -164,12 +157,27 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 			}
 			return 1
 		}
+
 		var p *stage.Problem
-		if errors.As(err, &p) && p.Code == "backup-restore-set" {
-			fmt.Fprintf(stderr, "Backup set %s is missing or invalid. Import a backup before continuing. / 备份集 %s 缺失或无效，请先导入备份。\n", p.Detail, p.Detail)
+		if errors.As(err, &p) {
+			switch p.Code {
+			case "backup-restore-set":
+				fmt.Fprintf(stderr, "Backup set %s is missing or invalid. Import a backup before continuing. / 备份集 %s 缺失或无效，请先导入备份。\n", p.Detail, p.Detail)
+			case "unmatched-file":
+				fmt.Fprintf(stderr, "This file is not one of the files listed here / 此文件不在此处列出的文件中: %s\n", p.Detail)
+			case "catalog-unknown":
+				fmt.Fprintf(stderr, "This package is not in the package list. Listed versions / 此安装包不在软件包列表中。列表包含以下版本: %s\n", p.Detail)
+			case "file-changed":
+				fmt.Fprintf(stderr, "This file changed after selection; choose it again / 此文件在选择后发生变化，请重新选择: %s\n", p.Detail)
+			case "file-cancelled":
+				fmt.Fprintf(stderr, "File checking cancelled / 已取消文件校验: %s\n", p.Detail)
+			default:
+				fmt.Fprintf(stderr, "Cannot continue / 无法继续: %v\n", err)
+			}
 		} else {
 			fmt.Fprintf(stderr, "Cannot continue / 无法继续: %v\n", err)
 		}
+
 		return 1
 	}
 	fetch := func() {
@@ -192,21 +200,19 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 			return failure(err)
 		}
 		return output(state)
-	case "download":
+	case "import":
 		fetch()
-		state, err := svc.DownloadLayer(ctx, *profileID, *layer, *version)
+
+		state, err := svc.SelectFiles(ctx, "", "", "", positional)
 		if err != nil {
 			return failure(err)
 		}
-		return output(state)
-	case "import":
-		fetch()
-		for _, path := range positional {
-			if _, err = svc.ImportFile(ctx, path); err != nil {
-				return failure(err)
+		for _, result := range state.FileResults {
+			if result.Problem != nil {
+				return failure(result.Problem)
 			}
 		}
-		return output(svc.InstallSnapshot())
+		return output(state)
 	case "backup":
 		op := positional[0]
 		dir := ""
@@ -261,14 +267,26 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 			return failure(err)
 		}
 	}
-	for _, path := range positional {
-		if _, err = svc.ImportFile(ctx, path); err != nil {
+
+	if len(positional) > 0 {
+		state, err := svc.SelectFiles(ctx, *choice, "", "", positional)
+		if err != nil {
 			return failure(err)
 		}
-		// A picked local pair can be loaded immediately; catalog imports are resolved in Prepare.
-		_, _ = svc.InstallAdd(path)
+		for _, result := range state.FileResults {
+			if result.Problem != nil {
+				return failure(result.Problem)
+			}
+		}
 	}
+
 	state := svc.Install(ctx)
+	if cmd == "plan" {
+		state, err = svc.InstallPrepare(ctx, *choice)
+		if err != nil {
+			return failure(err)
+		}
+	}
 	var selected *stage.Choice
 	for _, c := range state.Choices {
 		if c.ID == *choice {
@@ -411,6 +429,19 @@ func (p *enginePrinter) Emit(name string, data any) {
 		}
 	}
 
+	if check := state.FileCheck; check != nil && check.Status == "checking" {
+		if p.last == check.Name && time.Since(p.at) < 200*time.Millisecond && check.Done != check.Total {
+			return
+		}
+		p.last, p.at = check.Name, time.Now()
+		if p.json {
+			_ = json.NewEncoder(p.out).Encode(map[string]any{"type": "file-check", "check": check})
+		} else {
+			fmt.Fprintf(p.out, "Checking / 正在校验 %s: %d/%d B\n", check.Name, check.Done, check.Total)
+		}
+		return
+	}
+
 	if p.seen == nil {
 		p.seen = map[string]string{}
 	}
@@ -430,7 +461,7 @@ func (p *enginePrinter) Emit(name string, data any) {
 		p.at = time.Now()
 		p.seen[key] = value
 		if p.json {
-			_ = json.NewEncoder(p.out).Encode(map[string]any{"type": "download", "artifact": a})
+			_ = json.NewEncoder(p.out).Encode(map[string]any{"type": "file-check", "artifact": a})
 		} else {
 			fmt.Fprintf(p.out, "%s: %d/%d bytes / 字节\n", a.Name, a.Done, a.Total)
 		}
