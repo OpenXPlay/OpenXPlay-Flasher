@@ -9,7 +9,7 @@ import { ZH, t, setLang } from "../assets/i18n.js";
 
 const read = (name) => readFileSync(new URL("../assets/" + name, import.meta.url), "utf8");
 const html = read("index.html");
-const scripts = ["app.js", "devices.js"].map(read).join("\n");
+const scripts = ["app.js", "devices.js", "config.js", "configlogic.js"].map(read).join("\n");
 
 // Every English string the page can show: data-t attributes, t("...") calls and the mode labels.
 function usedStrings() {
@@ -17,6 +17,7 @@ function usedStrings() {
   for (const m of html.matchAll(/data-ta?="([^"]+)"/g)) out.add(m[1]);
   for (const m of scripts.matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"/g)) out.add(JSON.parse('"' + m[1] + '"'));
   for (const m of read("devices.js").matchAll(/^\s+\w+: "([^"]+)",$/gm)) out.add(m[1]);
+  for (const m of read("configlogic.js").matchAll(/^\s+"[\w-]+": "([^"]+)",$/gm)) out.add(m[1]);
   for (const m of scripts.matchAll(/status\("\w+", "([^"]+)"(?:,\s*"([^"]+)")?/g)) {
     out.add(m[1]);
     if (m[2]) out.add(m[2]);

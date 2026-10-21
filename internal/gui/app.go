@@ -10,6 +10,7 @@ import (
 	"context"
 	_ "embed"
 	"log"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -17,7 +18,9 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/config"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/version"
 )
@@ -56,6 +59,30 @@ func (h *host) SetLang(lang string) {
 	})
 }
 
+func (h *host) SaveFile(name string, data []byte) (string, error) {
+	dest, err := h.app.Dialog.SaveFile().SetFilename(name).CanCreateDirectories(true).PromptForSingleSelection()
+	if err != nil || dest == "" {
+		return "", err
+	}
+	return dest, os.WriteFile(dest, data, 0o600)
+}
+
+func (h *host) OpenFile() (string, []byte, error) {
+	src, err := h.app.Dialog.OpenFile().CanChooseFiles(true).PromptForSingleSelection()
+	if err != nil || src == "" {
+		return "", nil, err
+	}
+	st, err := os.Stat(src)
+	if err != nil {
+		return "", nil, err
+	}
+	if st.Size() > config.MaxSize {
+		return "", nil, config.ErrTooLarge
+	}
+	data, err := os.ReadFile(src)
+	return filepath.Base(src), data, err
+}
+
 func (h *host) openInBrowser(url string) {
 	if err := h.OpenURL(url); err != nil {
 		log.Println("openxplay-flasher: opening", url+":", err)
@@ -75,6 +102,7 @@ func Run() error {
 	if err != nil {
 		return err
 	}
+	svc.SetADB(adb.NewConnector())
 	settings := NewSettingsStore(dir)
 	sysLang := systemLang()
 	lang := UILang(settings.Load().Lang, sysLang)

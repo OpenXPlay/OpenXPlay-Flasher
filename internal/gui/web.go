@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 )
@@ -25,7 +26,11 @@ const webCookie = "oxpf_key"
 // webNative backs the browser mode, where the page opens links itself.
 type webNative struct{}
 
-func (webNative) OpenURL(string) error { return errors.New("not available in browser mode") }
+func (webNative) OpenURL(string) error { return errNoDialogs }
+
+func (webNative) SaveFile(string, []byte) (string, error) { return "", errNoDialogs }
+
+func (webNative) OpenFile() (string, []byte, error) { return "", nil, errNoDialogs }
 
 // SetLang: the page titles the browser tab itself, and a browser has no app menu.
 func (webNative) SetLang(string) {}
@@ -51,6 +56,7 @@ func ServeWeb(ctx context.Context, addr string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	svc.SetADB(adb.NewConnector())
 	svc.Start(ctx)
 	defer svc.Stop()
 

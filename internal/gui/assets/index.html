@@ -25,7 +25,13 @@ Created by riko chen on 2026-10-20
     </div>
   </header>
 
-  <div class="preview" role="note" data-t="Development preview: this version only detects devices and never writes to them.">Development preview: this version only detects devices and never writes to them.</div>
+  <nav class="tabs" role="tablist" aria-label="Views" data-ta="Views">
+    <button type="button" role="tab" data-view="install" aria-selected="true" data-t="Install and update">Install and update</button>
+    <button type="button" role="tab" data-view="config" aria-selected="false" data-t="Configuration">Configuration</button>
+  </nav>
+
+  <div id="view-install">
+  <div class="preview" role="note" data-t="Development preview: installing and updating are not available yet; this view only detects devices.">Development preview: installing and updating are not available yet; this view only detects devices.</div>
 
   <ol class="steps" aria-label="Steps" data-ta="Steps">
     <li class="current" data-t="Connect">Connect</li>
@@ -41,6 +47,11 @@ Created by riko chen on 2026-10-20
       <h2 data-t="Connect your device">Connect your device</h2>
       <div id="devices" class="devices"></div>
     </section>
+  </main>
+  </div>
+
+  <main id="view-config" hidden>
+    <section id="config" class="card config"></section>
   </main>
 
   <footer class="foot">

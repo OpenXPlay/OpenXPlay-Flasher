@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 )
@@ -65,6 +66,17 @@ type Layer struct {
 	Destructive bool `json:"destructive"`
 }
 
+// ConfigFile is a configuration file on the device that the configuration window offers.
+type ConfigFile struct {
+	ID   string `json:"id"`
+	Path string `json:"path"`
+	Name Text   `json:"name"`
+	// Format is "json" (checked before a write) or "text".
+	Format string `json:"format"`
+	// RestartService: the profile's service reads this file at start, so a write restarts it.
+	RestartService bool `json:"restartService"`
+}
+
 // Profile is one supported device model.
 type Profile struct {
 	ID   string `json:"id"`
@@ -74,6 +86,9 @@ type Profile struct {
 	Family string     `json:"family"`
 	USB    []USBMatch `json:"usb"`
 	Layers []Layer    `json:"layers"`
+	// Service is the systemd unit of the relay on the device, restarted after configuration writes.
+	Service string       `json:"service,omitempty"`
+	Config  []ConfigFile `json:"config,omitempty"`
 }
 
 // Layer returns the layer with the given ID.
@@ -171,13 +186,41 @@ func (p Profile) Validate() error {
 		}
 		destructiveDone = destructiveDone || !l.Destructive
 	}
-	return nil
+	return p.validateConfig()
 }
 
 func (t Text) validate(what string) error {
 	for _, lang := range []string{"en", "zh-CN"} {
 		if t[lang] == "" {
 			return fmt.Errorf("%s: missing %s text", what, lang)
+		}
+	}
+	return nil
+}
+
+var serviceName = regexp.MustCompile(`^[A-Za-z0-9@._-]+\.service$`)
+
+func (p Profile) validateConfig() error {
+	if p.Service != "" && !serviceName.MatchString(p.Service) {
+		return fmt.Errorf("profile %s: service %q is not a systemd service name", p.ID, p.Service)
+	}
+	seen := map[string]bool{}
+	for _, c := range p.Config {
+		if c.ID == "" || seen[c.ID] {
+			return fmt.Errorf("profile %s: empty or repeated config id %q", p.ID, c.ID)
+		}
+		seen[c.ID] = true
+		if !path.IsAbs(c.Path) || path.Clean(c.Path) != c.Path {
+			return fmt.Errorf("profile %s: config %s: path %q must be absolute and clean", p.ID, c.ID, c.Path)
+		}
+		if c.Format != "json" && c.Format != "text" {
+			return fmt.Errorf("profile %s: config %s: unknown format %q", p.ID, c.ID, c.Format)
+		}
+		if c.RestartService && p.Service == "" {
+			return fmt.Errorf("profile %s: config %s restarts the service, but the profile names none", p.ID, c.ID)
+		}
+		if err := c.Name.validate("config " + c.ID + " name"); err != nil {
+			return err
 		}
 	}
 	return nil

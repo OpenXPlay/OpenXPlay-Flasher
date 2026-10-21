@@ -5,10 +5,12 @@
 A desktop app for Windows and macOS that installs the OpenXPlay relay on supported devices and keeps
 it up to date. Each device's system is a stack of layers (for example base system, device support,
 relay). The flasher can install every layer from scratch or update a single layer on its own, which
-is usually only the relay.
+is usually only the relay. Its Configuration view reads and changes the configuration files of a
+connected Linux relay over USB: the device keeps a backup of each version, and if the relay does not
+stay up after a change, the previous version is put back.
 
-> Development preview: this version detects devices and shows their layers; it does not write to
-> any device yet.
+> Development preview: this version detects devices, shows their layers and edits their
+> configuration; installing and updating layers are not available yet.
 
 | Device | Layers |
 | --- | --- |

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/config"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
@@ -45,6 +47,12 @@ type Service struct {
 	current device.Snapshot
 	cancel  context.CancelFunc
 	done    chan struct{}
+	adb     adb.Connector
+
+	// configMu keeps configuration operations from overlapping on the device.
+	configMu sync.Mutex
+	// newEditor lets tests replace the device-side defaults (backup folder, health wait).
+	newEditor func(adb.Device) *config.Editor
 }
 
 // New returns a stopped service for the given profiles; Start begins watching for devices.

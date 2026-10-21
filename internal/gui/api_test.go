@@ -31,6 +31,10 @@ func (f *fakeNative) OpenURL(url string) error {
 
 func (f *fakeNative) SetLang(lang string) { f.lang = lang }
 
+func (f *fakeNative) SaveFile(string, []byte) (string, error) { return "", errNoDialogs }
+
+func (f *fakeNative) OpenFile() (string, []byte, error) { return "", nil, errNoDialogs }
+
 type fixture struct {
 	handler  http.Handler
 	hub      *Hub

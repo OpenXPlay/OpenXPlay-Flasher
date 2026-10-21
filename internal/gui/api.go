@@ -32,7 +32,14 @@ type Native interface {
 	OpenURL(url string) error
 	// SetLang applies a new UI language to the native window title and menus.
 	SetLang(lang string)
+	// SaveFile asks where to save data on this computer and writes it there; "" when cancelled.
+	SaveFile(name string, data []byte) (string, error)
+	// OpenFile asks for a file on this computer and reads it; name is "" when cancelled.
+	OpenFile() (name string, data []byte, err error)
 }
+
+// errNoDialogs: browser mode has no native dialogs; the page uses the browser's own.
+var errNoDialogs = errors.New("not available in browser mode")
 
 // Deps are the parts the handler serves.
 type Deps struct {
@@ -144,6 +151,7 @@ func Handler(d Deps) http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	configRoutes(mux, d)
 	mux.Handle("/", staticHandler())
 	return mux
 }

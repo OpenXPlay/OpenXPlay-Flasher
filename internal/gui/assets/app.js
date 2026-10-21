@@ -7,33 +7,11 @@
 
 import { t, setLang, lang, translateStatic } from "./i18n.js";
 import { deviceView, modelView, modeLabel, otherModeLabel, usbId, usbPort } from "./devices.js";
+import { api, el } from "./ui.js";
+import * as configView from "./config.js";
 
 const boot = window.bootPrefs || { lang: "en", web: true };
-const state = { info: null, profiles: [], devices: null, rev: 0, offline: false, othersOpen: false };
-
-async function api(path, body) {
-  const res = await fetch("/api/" + path, {
-    method: body === undefined ? "GET" : "POST",
-    headers: body === undefined ? {} : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (res.status === 204) return null;
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error((data && data.error) || res.statusText);
-  return data;
-}
-
-function el(tag, attrs, children) {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs || {})) {
-    if (key === "class") node.className = value;
-    else node.setAttribute(key, value);
-  }
-  for (const child of [].concat(children || [])) {
-    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
-  }
-  return node;
-}
+const state = { info: null, profiles: [], devices: null, rev: 0, offline: false, othersOpen: false, view: "install" };
 
 function status(kind, title, text) {
   return el("div", { class: "status " + kind }, [
@@ -122,6 +100,17 @@ function render() {
   }
   renderDevices();
   renderFooter();
+  configView.render();
+}
+
+function showView(name) {
+  state.view = name;
+  for (const tab of document.querySelectorAll("[data-view]")) {
+    tab.setAttribute("aria-selected", String(tab.dataset.view === name));
+  }
+  document.getElementById("view-install").hidden = name !== "install";
+  document.getElementById("view-config").hidden = name !== "config";
+  if (name === "config") configView.refresh();
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -136,7 +125,10 @@ async function follow() {
       state.rev = next.rev;
       if (next.rev > 0) state.devices = next.devices;
       state.offline = false;
-      if (changed) renderDevices();
+      if (changed) {
+        renderDevices();
+        if (state.view === "config") configView.refresh();
+      }
     } catch (err) {
       if (!state.offline) {
         state.offline = true;
@@ -173,6 +165,11 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  const tab = event.target.closest("[data-view]");
+  if (tab) {
+    showView(tab.dataset.view);
+    return;
+  }
   const langButton = event.target.closest("[data-lang]");
   if (langButton) {
     setLang(langButton.dataset.lang);
@@ -188,6 +185,7 @@ document.addEventListener("click", (event) => {
 });
 
 setLang(boot.lang);
+configView.init(boot);
 render();
 api("info").then((info) => { state.info = info; renderFooter(); }).catch((err) => console.error(err));
 api("profiles").then((profiles) => { state.profiles = profiles || []; renderDevices(); }).catch((err) => console.error(err));

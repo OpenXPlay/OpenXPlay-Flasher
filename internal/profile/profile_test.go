@@ -66,3 +66,36 @@ func TestLoadRejectsBadProfiles(t *testing.T) {
 		t.Error("file name not matching the id accepted")
 	}
 }
+
+func TestConfigFiles(t *testing.T) {
+	profiles, _ := Builtin()
+	p := profiles[0]
+	if p.Service != "openxplay-relay.service" || len(p.Config) != 2 || p.Config[0].Path != "/var/lib/openxplay/settings.json" {
+		t.Fatalf("UFI003 config %q %+v", p.Service, p.Config)
+	}
+	base := func() Profile {
+		return Profile{ID: "x", Family: "f", Name: Text{"en": "X", "zh-CN": "X"}, Service: "relay.service",
+			USB:    []USBMatch{{Mode: ModeADB, VendorID: "18d1", ProductID: "d001"}},
+			Layers: []Layer{{ID: "top", Name: Text{"en": "T", "zh-CN": "T"}, Transport: ModeADB}},
+			Config: []ConfigFile{{ID: "c", Path: "/etc/x.json", Format: "json", RestartService: true, Name: Text{"en": "C", "zh-CN": "C"}}}}
+	}
+	if err := base().Validate(); err != nil {
+		t.Fatalf("valid profile rejected: %v", err)
+	}
+	bad := map[string]func(*Profile){
+		"relative path":    func(p *Profile) { p.Config[0].Path = "etc/x.json" },
+		"unclean path":     func(p *Profile) { p.Config[0].Path = "/etc/../etc/x.json" },
+		"unknown format":   func(p *Profile) { p.Config[0].Format = "yaml" },
+		"restart, no unit": func(p *Profile) { p.Service = "" },
+		"bad service name": func(p *Profile) { p.Service = "relay; reboot" },
+		"repeated id":      func(p *Profile) { p.Config = append(p.Config, p.Config[0]) },
+		"missing zh":       func(p *Profile) { p.Config[0].Name = Text{"en": "C"} },
+	}
+	for name, mutate := range bad {
+		p := base()
+		mutate(&p)
+		if p.Validate() == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
