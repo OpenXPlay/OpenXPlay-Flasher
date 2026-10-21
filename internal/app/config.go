@@ -13,6 +13,7 @@ import (
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/config"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
 )
 
 // Why the configuration window cannot work on a device right now.
@@ -46,7 +47,8 @@ func (s *Service) ConfigTarget() (ConfigTarget, error) {
 	s.mu.Lock()
 	snap, connector := s.current, s.adb
 	s.mu.Unlock()
-	if connector == nil {
+	snap = s.selectedSnapshot(s.addSSH(snap))
+	if connector == nil && s.Connection().Device == nil {
 		return ConfigTarget{}, ErrNoADB
 	}
 	var supported []device.Candidate
@@ -62,8 +64,11 @@ func (s *Service) ConfigTarget() (ConfigTarget, error) {
 		return ConfigTarget{}, ErrSeveralDevices
 	}
 	c := supported[0]
-	if c.Mode != device.ModeADB {
+	if c.Mode != device.ModeADB && c.Mode != device.ModeSSH {
 		return ConfigTarget{}, ErrNotADB
+	}
+	if c.Mode == device.ModeSSH && s.Connection().Device == nil {
+		return ConfigTarget{}, &stage.Problem{Code: "ssh-login"}
 	}
 	if len(c.Profiles) != 1 {
 		return ConfigTarget{}, ErrUnconfirmed
@@ -86,10 +91,7 @@ func (s *Service) withEditor(ctx context.Context, fn func(*config.Editor, Config
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	connector := s.adb
-	s.mu.Unlock()
-	dev, err := connector.Connect(ctx, t.Device.USB)
+	dev, err := s.openDevice(ctx, t.Device)
 	if err != nil {
 		return err
 	}

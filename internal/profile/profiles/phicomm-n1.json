@@ -1,0 +1,95 @@
+{
+  "id": "phicomm-n1",
+  "name": {
+    "en": "Phicomm N1",
+    "zh-CN": "斐讯 N1"
+  },
+  "family": "amlogic-s905d",
+  "transport": "ssh",
+  "connections": [
+    {
+      "id": "usb",
+      "host": "192.168.201.1",
+      "port": 22
+    },
+    {
+      "id": "network",
+      "port": 22
+    }
+  ],
+  "confirmation": {
+    "deviceTreeModel": "Phicomm N1",
+    "debianVersion": "13",
+    "architecture": "arm64"
+  },
+  "usb": [
+    {
+      "mode": "ssh",
+      "vendorId": "1d6b",
+      "productId": "0104",
+      "interface": {
+        "class": 2,
+        "subClass": 13,
+        "protocol": 0
+      }
+    }
+  ],
+  "layers": [
+    {
+      "id": "base",
+      "name": {
+        "en": "Armbian",
+        "zh-CN": "Armbian"
+      },
+      "transport": "ssh",
+      "readOnly": true,
+      "guide": "phicommN1",
+      "deviceTreeModel": "Phicomm N1",
+      "debianVersion": "13",
+      "architecture": "arm64"
+    },
+    {
+      "id": "device",
+      "name": {
+        "en": "Device support",
+        "zh-CN": "设备支持"
+      },
+      "transport": "ssh",
+      "package": "openxplay-phicomm-n1",
+      "debianVersion": "13",
+      "deviceTreeModel": "Phicomm N1"
+    },
+    {
+      "id": "relay",
+      "name": {
+        "en": "OpenXPlay relay",
+        "zh-CN": "OpenXPlay 中继"
+      },
+      "transport": "ssh",
+      "package": "openxplay-relay"
+    }
+  ],
+  "service": "openxplay-relay.service",
+  "config": [
+    {
+      "id": "relay-settings",
+      "path": "/var/lib/openxplay/settings.json",
+      "name": {
+        "en": "Relay settings",
+        "zh-CN": "中继设置"
+      },
+      "format": "json",
+      "restartService": true
+    },
+    {
+      "id": "host-profile",
+      "path": "/etc/openxplay/host.json",
+      "name": {
+        "en": "Host profile (interfaces and hardware)",
+        "zh-CN": "主机配置（网卡与硬件）"
+      },
+      "format": "json",
+      "restartService": true
+    }
+  ]
+}

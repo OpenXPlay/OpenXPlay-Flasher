@@ -7,7 +7,9 @@ package app
 import (
 	"context"
 	"errors"
+	"net"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
@@ -72,10 +74,10 @@ func (s *Service) installDevice(ctx context.Context) (InstallTarget, profile.Pro
 	s.mu.Lock()
 	connector := s.adb
 	s.mu.Unlock()
-	if connector == nil {
+	if connector == nil && s.Connection().Device == nil {
 		return InstallTarget{}, profile.Profile{}, ErrNoADB
 	}
-	snap := s.scanDevices(ctx, false)
+	snap := s.selectedSnapshot(s.scanDevices(ctx, false))
 	if snap.Error != "" {
 		return InstallTarget{}, profile.Profile{}, &stage.Problem{Code: "usb", Detail: snap.Error}
 	}
@@ -92,8 +94,11 @@ func (s *Service) installDevice(ctx context.Context) (InstallTarget, profile.Pro
 		return InstallTarget{}, profile.Profile{}, ErrSeveralDevices
 	}
 	c := supported[0]
-	if c.Mode != device.ModeADB {
+	if c.Mode != device.ModeADB && c.Mode != device.ModeSSH {
 		return InstallTarget{}, profile.Profile{}, ErrNotADB
+	}
+	if c.Mode == device.ModeSSH && s.Connection().Device == nil {
+		return InstallTarget{}, profile.Profile{}, &stage.Problem{Code: "ssh-login"}
 	}
 	if len(c.Profiles) != 1 {
 		return InstallTarget{}, profile.Profile{}, ErrUnconfirmed
@@ -163,20 +168,24 @@ func (s *Service) inspectInstall(ctx context.Context, choice string) (profile.Pr
 	packageProblems := map[string]*stage.Problem{}
 	if err == nil {
 		s.mu.Lock()
-		connector, packages := s.adb, slices.Clone(s.packages)
+		packages := slices.Clone(s.packages)
 		s.mu.Unlock()
 		if choice != "" {
 			packages = choicePackages(p, packages, choice)
 		}
 		var d adb.Device
-		d, err = connector.Connect(ctx, target.Device.USB)
+		d, err = s.openDevice(ctx, target.Device)
 		if err == nil {
-			serial, serialErr := base.LinuxSerial(ctx, d)
+			serial, serialErr := s.boardSerial(ctx, d)
 			s.mu.Lock()
 			s.baseIdentity = nil
 			s.unfinished = nil
 			if serialErr == nil {
-				s.baseIdentity = &base.Identity{Mode: profile.ModeADB, Serial: serial, Location: target.Device.USB.Location()}
+				location := target.Device.USB.Location()
+				if target.Device.Mode == profile.ModeSSH {
+					location = net.JoinHostPort(target.Device.Host, strconv.Itoa(target.Device.Port))
+				}
+				s.baseIdentity = &base.Identity{Mode: target.Device.Mode, Serial: serial, Location: location}
 			}
 			s.mu.Unlock()
 			// Discover installed layers from the profile alone; package-specific observations
@@ -200,7 +209,7 @@ func (s *Service) inspectInstall(ctx context.Context, choice string) (profile.Pr
 				s.observeIdentity(ctx, d, serial)
 			}
 			d.Close()
-			if err == nil && serialErr == nil {
+			if err == nil && serialErr == nil && p.Base != nil {
 				err = s.loadJournal(ctx, p, serial)
 			}
 		}
@@ -404,7 +413,7 @@ func (s *Service) startLayers(ctx context.Context, req stage.Request, retry *sta
 	}
 	if serial != "" {
 		executor.Confirm = func(ctx context.Context, d adb.Device) error {
-			actual, err := base.LinuxSerial(ctx, d)
+			actual, err := s.boardSerial(ctx, d)
 			if err != nil {
 				return err
 			}
@@ -432,10 +441,7 @@ func (s *Service) startLayers(ctx context.Context, req stage.Request, retry *sta
 		if t.Profile != p.ID {
 			return nil, &stage.Problem{Code: "wrong-device", Detail: t.Profile}
 		}
-		s.mu.Lock()
-		connector := s.adb
-		s.mu.Unlock()
-		d, err := connector.Connect(ctx, t.Device.USB)
+		d, err := s.openDevice(ctx, t.Device)
 		if err == nil {
 			s.mu.Lock()
 			s.installTarget = &t

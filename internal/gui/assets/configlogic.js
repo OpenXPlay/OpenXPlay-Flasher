@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-21
 
+import { problemText as installProblemText } from "./installlogic.js";
+
 // Pure logic for the configuration view, kept free of the DOM so it runs under node:test.
 
 // checkContent mirrors the Go side's format check, so Save is offered only for content the device
@@ -40,6 +42,7 @@ const ERROR_TEXT = {
 // errorText turns an API error into a sentence in the UI language; t is the translator. Errors
 // without a known code keep the server's own message.
 export function errorText(t, err) {
+  if(err?.code?.startsWith("ssh-")) return installProblemText(t,err);
   const known = ERROR_TEXT[err && err.code];
   if (known) return t(known);
   if (err && err.code === "invalid") return t("The content is not valid: {msg}", { msg: err.message });

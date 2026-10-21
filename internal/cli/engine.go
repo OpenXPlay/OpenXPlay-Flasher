@@ -50,7 +50,7 @@ var commandService = func(hardware bool, events app.Events) (*app.Service, func(
 // standard parser. Boolean flags never consume the following positional argument.
 func interspersed(args []string) []string {
 	var flags, rest []string
-	booleans := map[string]bool{"json": true, "yes": true, "downgrade": true, "no-signature-check": true}
+	booleans := map[string]bool{"json": true, "yes": true, "downgrade": true, "no-signature-check": true, "ssh-usb": true, "restart": true}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -74,6 +74,9 @@ func interspersed(args []string) []string {
 func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	var sshOptions sshFlags
+	sshOptions.register(fs)
+	restart := fs.Bool("restart", false, "restart the relay after writing / 写入后重启中继")
 	asJSON := fs.Bool("json", false, "print JSON / 输出 JSON")
 	channel := fs.String("channel", "beta", "catalog channel / 目录频道")
 	var noSignatureCheck bool
@@ -119,6 +122,18 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 		if len(positional) != 1 {
 			return usageError()
 		}
+	case "devices":
+		if len(positional) != 0 {
+			return usageError()
+		}
+	case "config-get":
+		if len(positional) != 1 {
+			return usageError()
+		}
+	case "config-put":
+		if len(positional) != 2 {
+			return usageError()
+		}
 	case "plan", "install":
 		if *choice == "" {
 			*choice = *only
@@ -137,7 +152,10 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 			return usageError()
 		}
 	}
-	hardware := cmd == "fastboot" || cmd == "designate-stock" || cmd == "plan" || cmd == "install"
+	hardware := !sshOptions.enabled() && (cmd == "fastboot" || cmd == "designate-stock" || cmd == "plan" || cmd == "install" || cmd == "devices" || cmd == "config-get" || cmd == "config-put") || sshOptions.usb
+	if sshOptions.enabled() && cmd != "devices" && cmd != "plan" && cmd != "install" && cmd != "config-get" && cmd != "config-put" {
+		return usageError()
+	}
 	var events app.Events = &enginePrinter{out: stderr, json: *asJSON}
 	svc, closeService, err := commandService(hardware, events)
 	if err != nil {
@@ -184,6 +202,23 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 		}
 
 		return 1
+	}
+	if err = sshOptions.connect(ctx, svc, stdin, stderr); err != nil {
+		return failure(err)
+	}
+	if cmd == "devices" {
+		snap := svc.Rescan(ctx)
+		if *asJSON {
+			return writeJSON(stdout, stderr, snap)
+		}
+		printSnapshot(stdout, snap)
+		if snap.Error != "" {
+			return 1
+		}
+		return 0
+	}
+	if cmd == "config-get" || cmd == "config-put" {
+		return runConfig(svc, cmd, positional, *restart, stdout, stderr)
 	}
 	fetch := func() {
 		fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -336,7 +371,11 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 	state = svc.Install(ctx)
 	if !*asJSON {
 		printEnginePlan(stdout, *selected)
-		fmt.Fprintln(stdout, "Keep the USB cable connected and this computer powered. / 请保持 USB 连接和电脑供电。")
+		if sshOptions.enabled() {
+			fmt.Fprintln(stdout, "Keep the box powered and connected. / 请保持盒子供电和连接。")
+		} else {
+			fmt.Fprintln(stdout, "Keep the USB cable connected and this computer powered. / 请保持 USB 连接和电脑供电。")
+		}
 	}
 	if !*yes && !selected.Destructive {
 		if *asJSON {

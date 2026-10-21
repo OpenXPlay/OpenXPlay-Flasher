@@ -108,7 +108,7 @@ func BuildPlan(p profile.Profile, installed Facts, packages []*Package, req Requ
 	var deferred *Package
 	for _, layer := range p.Layers {
 		pkg := loaded[layer.ID]
-		if layer.Transport != profile.ModeADB || layer.Destructive || req.Choice != "full" && req.Choice != layer.ID || pkg == nil {
+		if (layer.Transport != profile.ModeADB && layer.Transport != profile.ModeSSH) || layer.Destructive || req.Choice != "full" && req.Choice != layer.ID || pkg == nil {
 			continue
 		}
 		for _, below := range p.Below(layer.ID) {

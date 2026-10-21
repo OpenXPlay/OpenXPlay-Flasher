@@ -59,6 +59,13 @@ Commands:
   web              serve the app's page to a browser on this computer, for UI work
 
 Flags:
+  --ssh [user@]host[:port], --ssh-usb
+                   devices, plan, install, config-get, config-put: SSH / 通过 SSH 连接
+  --ssh-key FILE   optional private key / 可选私钥文件
+  --accept-host-key SHA256:…
+                   accept a verified first-use fingerprint / 接受已核对的首次连接指纹
+  OXP_FLASHER_SSH_PASSWORD
+                   password in the environment, otherwise a no-echo prompt / 环境变量密码，或在无回显提示中输入
   --no-signature-check
                    catalog, import, backup, plan, install: ignore the package list signature
                    忽略软件包列表签名；仍校验文件 SHA-256，仍执行基础系统固定值和清单检查
@@ -78,7 +85,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	}
 	cmd := args[0]
 	switch cmd {
-	case "catalog", "import", "backup", "fastboot", "designate-stock", "plan", "install":
+	case "catalog", "import", "backup", "fastboot", "designate-stock", "plan", "install", "devices", "config-get", "config-put":
 		return runEngineCLI(cmd, args[1:], os.Stdin, stdout, stderr)
 	}
 	if cmd == "help" || cmd == "-h" || cmd == "--help" {

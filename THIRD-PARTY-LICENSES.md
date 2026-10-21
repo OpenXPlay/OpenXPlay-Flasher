@@ -11,7 +11,8 @@ licence texts are in the module sources listed.
 | Wails `internal/webview2/webviewloader` (John Chadwick, Wails Project Developers) | v3.0.0-beta.34 | ISC | Windows app | https://github.com/wailsapp/wails |
 | gousb | v1.1.3 | Apache-2.0 | macOS and Linux builds | https://github.com/google/gousb |
 | libusb | 1.0.30, built unmodified from its release tarball by `build/libusb.sh` (universal, macOS 12+); dynamic library inside the macOS app bundle | LGPL-2.1-or-later | macOS app | https://github.com/libusb/libusb |
-| golang.org/x/sys | v0.48.0 | BSD-3-Clause | all builds | https://go.googlesource.com/sys |
+| golang.org/x/crypto | v0.58.0 | BSD-3-Clause | SSH and known_hosts in all builds | https://go.googlesource.com/crypto |
+| golang.org/x/sys | v0.49.0 | BSD-3-Clause | all builds | https://go.googlesource.com/sys |
 | adrg/xdg | v0.5.3 | MIT | app builds | https://github.com/adrg/xdg |
 | go-ole | v1.3.0 | MIT | Windows app | https://github.com/go-ole/go-ole |
 | mattn/go-colorable | v0.1.14 | MIT | Windows app | https://github.com/mattn/go-colorable |

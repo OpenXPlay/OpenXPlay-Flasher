@@ -416,7 +416,7 @@ func (e *Executor) waitForBoot(ctx context.Context) error {
 			if readErr == nil && r.ExitCode == 0 && bootID != "" {
 				if bootID != e.bootID {
 					stop()
-					e.log("adb returned after reboot\n")
+					e.log("Device returned after reboot / 设备重启后已连接\n")
 					return nil
 				}
 				sameBoot = true
@@ -424,7 +424,12 @@ func (e *Executor) waitForBoot(ctx context.Context) error {
 			d.Close()
 			e.dev = nil
 		} else {
-			e.log("Waiting for adb: " + err.Error() + "\n")
+			e.log("Waiting for device / 等待设备连接: " + err.Error() + "\n")
+			var permanent interface{ Permanent() bool }
+			if errors.As(err, &permanent) && permanent.Permanent() {
+				stop()
+				return err
+			}
 			var p *Problem
 			if errors.As(err, &p) && p.Code != "no-device" && p.Code != "not-adb" {
 				stop()

@@ -38,7 +38,7 @@ func (s *Service) SetFastboot(open base.OpenFastboot, supported bool) {
 	s.fastbootSupported = supported
 }
 func (s *Service) scanDevices(ctx context.Context, probe bool) device.Snapshot {
-	snap := s.detector.Scan(ctx)
+	snap := s.addSSH(s.detector.Scan(ctx))
 	snap.Candidates = slices.Clone(snap.Candidates)
 	s.mu.Lock()
 	open, supported := s.fastbootOpen, s.fastbootSupported
@@ -208,7 +208,7 @@ func (s *Service) loadJournal(ctx context.Context, p profile.Profile, serial str
 	return err
 }
 func (s *Service) inspectBaseTarget(ctx context.Context) (bool, profile.Profile, error) {
-	snap := s.scanDevices(ctx, false)
+	snap := s.selectedSnapshot(s.scanDevices(ctx, false))
 	var chosen *device.Candidate
 	for _, c := range snap.Candidates {
 		if c.Mode == profile.ModeFastboot || c.Mode == profile.ModeStock {

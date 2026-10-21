@@ -19,7 +19,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
@@ -83,7 +82,6 @@ var contentTypes = map[string]string{
 // Handler serves the page and the API.
 func Handler(d Deps) http.Handler {
 	d.Service.SetSignatureCheck(context.Background(), d.Settings.Load().VerifyPackageListSignature)
-	var settingsMu sync.Mutex
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /boot.js", func(w http.ResponseWriter, r *http.Request) {
@@ -135,17 +133,26 @@ func Handler(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/settings", func(w http.ResponseWriter, r *http.Request) {
 		// Merge preference changes as one operation, so changing language cannot undo a
 		// simultaneous signature switch in another window.
-		settingsMu.Lock()
-		defer settingsMu.Unlock()
-		in := d.Settings.Load()
-		if !readJSON(w, r, &in) {
+		var patch struct {
+			Lang      *string `json:"lang"`
+			Signature *bool   `json:"verifyPackageListSignature"`
+		}
+		if !readJSON(w, r, &patch) {
 			return
 		}
-		if in.Lang != "" && NormalizeLang(in.Lang) != in.Lang {
+		if patch.Lang != nil && *patch.Lang != "" && NormalizeLang(*patch.Lang) != *patch.Lang {
 			writeError(w, http.StatusBadRequest, "bad_lang", "unsupported language")
 			return
 		}
-		if err := d.Settings.Save(in); err != nil {
+		in, err := d.Settings.Update(func(v *Settings) {
+			if patch.Lang != nil {
+				v.Lang = *patch.Lang
+			}
+			if patch.Signature != nil {
+				v.VerifyPackageListSignature = *patch.Signature
+			}
+		})
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "settings_write", err.Error())
 			return
 		}
@@ -162,7 +169,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		forward := d.Service.ForwardStatus()
-		if !canOpen(in.URL) && !(forward.Active && in.URL == forward.Address) {
+		if !canOpen(in.URL) && !(forward.Active && in.URL == forward.Address) && in.URL != d.Service.InstallSnapshot().NextSteps.AdminURL {
 			writeError(w, http.StatusForbidden, "url_not_allowed", "this address cannot be opened")
 			return
 		}
@@ -173,6 +180,7 @@ func Handler(d Deps) http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	sshRoutes(mux, d)
 	configRoutes(mux, d)
 	installRoutes(mux, d)
 	guidedRoutes(mux, d)

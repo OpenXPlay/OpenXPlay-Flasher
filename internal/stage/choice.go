@@ -89,6 +89,9 @@ type Choice struct {
 
 type LayerRow struct {
 	KernelRelease string       `json:"kernelRelease,omitempty"`
+	Guide         string       `json:"guide,omitempty"`
+	ReadOnly      bool         `json:"readOnly,omitempty"`
+	PrettyName    string       `json:"prettyName,omitempty"`
 	Layer         string       `json:"layer"`
 	Name          profile.Text `json:"name"`
 	Installed     string       `json:"installed"`
@@ -249,7 +252,10 @@ func BuildChoices(p profile.Profile, f Facts, provider PackageProvider, downgrad
 func LayerRows(p profile.Profile, f Facts, choices []Choice) []LayerRow {
 	rows := []LayerRow{}
 	for _, layer := range p.Layers {
-		row := LayerRow{Layer: layer.ID, Name: layer.Name, Installed: f.Layers[layer.ID], Action: "guide", Enabled: true}
+		row := LayerRow{Guide: layer.Guide, ReadOnly: layer.ReadOnly, Layer: layer.ID, Name: layer.Name, Installed: f.Layers[layer.ID], Action: "guide", Enabled: true}
+		if layer.ReadOnly {
+			row.KernelRelease, row.PrettyName = f.KernelRelease, f.PrettyName
+		}
 		for _, choice := range choices {
 			if choice.ID != layer.ID {
 				continue

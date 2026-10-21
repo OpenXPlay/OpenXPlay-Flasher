@@ -21,8 +21,9 @@ const (
 // Settings are the user's GUI preferences, kept in settings.json in the app's config folder.
 type Settings struct {
 	// Lang is "" to follow the system, or one of the shipped languages.
-	Lang                       string `json:"lang"`
-	VerifyPackageListSignature bool   `json:"verifyPackageListSignature"`
+	RecentHosts                []RecentHost `json:"recentHosts,omitempty"`
+	Lang                       string       `json:"lang"`
+	VerifyPackageListSignature bool         `json:"verifyPackageListSignature"`
 }
 
 func defaultSettings() Settings { return Settings{VerifyPackageListSignature: true} }
@@ -51,6 +52,10 @@ func NewSettingsStore(dir string) *SettingsStore {
 func (s *SettingsStore) Load() Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.loadLocked()
+}
+
+func (s *SettingsStore) loadLocked() Settings {
 	out := defaultSettings()
 	data, err := os.ReadFile(s.path)
 	if err != nil {
@@ -67,6 +72,10 @@ func (s *SettingsStore) Load() Settings {
 func (s *SettingsStore) Save(v Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.saveLocked(v)
+}
+
+func (s *SettingsStore) saveLocked(v Settings) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
@@ -111,4 +120,28 @@ func UILang(saved, system string) string {
 		return l
 	}
 	return LangEnglish
+}
+
+// RememberHost persists only the allowlisted form metadata, newest first.
+func (s *SettingsStore) RememberHost(host RecentHost) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v := s.loadLocked()
+	recent := []RecentHost{host}
+	for _, old := range v.RecentHosts {
+		if old.Host != host.Host || old.Port != host.Port || old.User != host.User || old.Mode != host.Mode {
+			recent = append(recent, old)
+		}
+	}
+	v.RecentHosts = recent[:min(10, len(recent))]
+	return s.saveLocked(v)
+}
+
+// Update merges a preference patch with recent hosts under the same store lock.
+func (s *SettingsStore) Update(change func(*Settings)) (Settings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v := s.loadLocked()
+	change(&v)
+	return v, s.saveLocked(v)
 }

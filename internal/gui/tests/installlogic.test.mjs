@@ -102,7 +102,7 @@ test("problem codes and step labels have both languages and localized layer depe
   assert.equal(problemText(t, { code: "below-missing", detail: "device" }), "Install Device support first.");
   assert.match(problemText(t, { code: "requirement", detail: "debianVersion=11" }), /debianVersion=11/);
   assert.equal(problemText(t, { code: "reboot-not-started" }), "The device did not start rebooting within 120 seconds.");
-  assert.equal(problemText(t, { code: "reboot-timeout" }), "The device did not return over adb within 120 seconds.");
+  assert.equal(problemText(t, { code: "reboot-timeout" }), "The device did not reconnect within 120 seconds.");
   setLang("zh-CN");
   assert.equal(problemText(t, { code: "below-missing", detail: "device" }), "请先安装设备支持。");
   assert.match(problemText(t, { code: "rolled-back" }), /已恢复/);

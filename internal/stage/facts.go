@@ -17,6 +17,7 @@ import (
 )
 
 type Facts struct {
+	PrettyName       string            `json:"prettyName,omitempty"`
 	Root             bool              `json:"root"`
 	KernelRelease    string            `json:"kernelRelease"`
 	DeviceTreeModel  string            `json:"deviceTreeModel"`
@@ -38,7 +39,8 @@ printf 'root\t'; id -u
 printf 'kernel\t'; uname -r
 printf 'model\t'; tr -d '\000' < /proc/device-tree/model; printf '\n'
 printf 'debian\t'; (. /etc/os-release; printf '%s\n' "$VERSION_ID")
-printf 'arch\t'; dpkg --print-architecture`
+printf 'arch\t'; dpkg --print-architecture
+printf 'pretty\t'; (. /etc/os-release; printf '%s\n' "$PRETTY_NAME")`
 
 // Inspect reads facts without creating folders or changing the device. Space is measured on the
 // nearest existing parent of each package's cache directory.
@@ -65,6 +67,7 @@ func Inspect(ctx context.Context, run Run, p profile.Profile, packages []*Packag
 	}
 	f.Root, f.KernelRelease, f.DeviceTreeModel = fields["root"] == "0", fields["kernel"], fields["model"]
 	f.DebianVersion, f.DPKGArchitecture = fields["debian"], fields["arch"]
+	f.PrettyName = fields["pretty"]
 	names, dirs := []string{}, []string{"/var/cache"}
 	for _, l := range p.Layers {
 		if l.Package != "" {
@@ -85,10 +88,15 @@ func Inspect(ctx context.Context, run Run, p profile.Profile, packages []*Packag
 	kernel, model := base.KernelRelease, base.DeviceTreeModel
 	for _, pkg := range packages {
 		if pkg.manifest.Stage == "device" && pkg.manifest.Device == p.ID {
-			kernel, model = pkg.manifest.Requires.KernelRelease, pkg.manifest.Requires.DeviceTreeModel
+			if kernel == "" {
+				kernel = pkg.manifest.Requires.KernelRelease
+			}
+			if model == "" {
+				model = pkg.manifest.Requires.DeviceTreeModel
+			}
 		}
 	}
-	if kernel != "" && model != "" && f.KernelRelease == kernel && f.DeviceTreeModel == model {
+	if model != "" && f.DeviceTreeModel == model && (kernel == "" || f.KernelRelease == kernel) && (base.DebianVersion == "" || base.DebianVersion == f.DebianVersion) && (base.Architecture == "" || base.Architecture == f.DPKGArchitecture) {
 		f.Layers["base"] = f.KernelRelease
 	}
 	if err := readSpace(ctx, run, dirs, f.FreeKiB); err != nil {

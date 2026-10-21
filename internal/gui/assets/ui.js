@@ -18,6 +18,7 @@ export async function api(path, body, method) {
     const err = new Error((data && data.error) || res.statusText);
     err.code = (data && data.code) || "http";
     err.detail = (data && (data.detail || data.error)) || "";
+    err.host = data?.host; err.fingerprint = data?.fingerprint;
     throw err;
   }
   return data;

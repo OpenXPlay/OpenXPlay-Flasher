@@ -56,6 +56,7 @@ Created by riko chen on 2026-10-21
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 html, body { margin: 0; }
 
@@ -553,3 +554,23 @@ progress { width: 100%; height: 10px; accent-color: var(--accent); }
 #pick-several { margin: 10px 0 18px; }
 .identity-success.result.ok { padding: 18px; border: 1px solid var(--accent); font-size: 15px; }
 .identity-success strong { display: block; font-size: 18px; margin-bottom: 6px; }
+
+/* Connection forms share the existing card and action styles. */
+.device-types { display:flex; gap:12px; flex-wrap:wrap; margin:12px 0 24px; }
+.device-types button { flex:1; min-height:64px; font-size:16px; }
+.device-types [aria-pressed="true"], .connection-modes [aria-pressed="true"] { border-color:var(--accent); background:var(--accent-soft); color:var(--text); }
+.ssh-form { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:20px 0; }
+.ssh-form label { display:flex; flex-direction:column; gap:7px; }
+.ssh-form input { width:100%; box-sizing:border-box; }
+.ssh-form > p, .ssh-form > section, .ssh-form > .actions { grid-column:1 / -1; }
+.host-key code { display:block; overflow-wrap:anywhere; margin:14px 0; }
+.recent-hosts { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.read-only-base { border:1px solid var(--line); border-radius:10px; padding:18px; margin:16px 0; }
+@media(max-width:600px) { .ssh-form { grid-template-columns:1fr; } }
+
+#device-selection button, .devices button { border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--text); font:inherit; padding:8px 14px; cursor:pointer; }
+#device-selection button[aria-pressed="true"], .devices button[aria-pressed="true"] { background:var(--accent-soft);border-color:var(--accent); }
+.devices button.primary { background:var(--accent);color:var(--accent-text);border-color:var(--accent); }
+.devices button:disabled, #device-selection button:disabled { opacity:.55;cursor:default; }
+.ssh-form input { padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit; }
+.devices a { color:var(--accent); }

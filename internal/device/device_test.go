@@ -115,3 +115,20 @@ func TestWatchReportsChangesOnly(t *testing.T) {
 	bus.Set()
 	expect("")
 }
+
+func TestN1RequiresNCMInterface(t *testing.T) {
+	profiles, err := profile.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl := NewClassifier(profiles)
+	d := usb.DeviceInfo{VendorID: 0x1d6b, ProductID: 0x0104}
+	if _, ok := cl.Classify(d); ok {
+		t.Fatal("generic gadget matched N1 without NCM")
+	}
+	d.Interfaces = []usb.Interface{{Class: 2, SubClass: 13, Protocol: 0}}
+	c, ok := cl.Classify(d)
+	if !ok || c.Mode != ModeSSH || len(c.Profiles) != 1 || c.Profiles[0] != "phicomm-n1" {
+		t.Fatalf("%+v", c)
+	}
+}

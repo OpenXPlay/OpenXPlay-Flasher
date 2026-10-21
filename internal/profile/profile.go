@@ -28,6 +28,7 @@ import (
 type Mode string
 
 const (
+	ModeSSH      Mode = "ssh"
 	ModeADB      Mode = "adb"
 	ModeFastboot Mode = "fastboot"
 	ModeEDL      Mode = "edl"
@@ -42,6 +43,28 @@ type USBMatch struct {
 	Mode      Mode   `json:"mode"`
 	VendorID  string `json:"vendorId"`
 	ProductID string `json:"productId"`
+	// Interface restricts a signature to the required USB class triple.
+	Interface *USBInterface `json:"interface,omitempty"`
+}
+
+type USBInterface struct {
+	Class    uint8 `json:"class"`
+	SubClass uint8 `json:"subClass"`
+	Protocol uint8 `json:"protocol"`
+}
+
+// ConnectionMode is a profile's SSH connection form. A blank host is supplied by the user.
+type ConnectionMode struct {
+	ID   string `json:"id"`
+	Host string `json:"host,omitempty"`
+	Port int    `json:"port"`
+}
+
+// Confirmation is checked before treating an SSH host as this model.
+type Confirmation struct {
+	DeviceTreeModel string `json:"deviceTreeModel"`
+	DebianVersion   string `json:"debianVersion"`
+	Architecture    string `json:"architecture"`
 }
 
 // IDs returns the parsed vendor and product IDs.
@@ -68,6 +91,10 @@ type Layer struct {
 	KernelRelease   string `json:"kernelRelease,omitempty"`
 	DeviceTreeModel string `json:"deviceTreeModel,omitempty"`
 	Package         string `json:"package,omitempty"`
+	DebianVersion   string `json:"debianVersion,omitempty"`
+	Architecture    string `json:"architecture,omitempty"`
+	ReadOnly        bool   `json:"readOnly,omitempty"`
+	Guide           string `json:"guide,omitempty"`
 }
 
 // ConfigFile is a configuration file on the device that the configuration window offers.
@@ -83,8 +110,11 @@ type ConfigFile struct {
 
 // Profile is one supported device model.
 type Profile struct {
-	ID   string `json:"id"`
-	Name Text   `json:"name"`
+	ID           string           `json:"id"`
+	Name         Text             `json:"name"`
+	Transport    Mode             `json:"transport,omitempty"`
+	Connections  []ConnectionMode `json:"connections,omitempty"`
+	Confirmation *Confirmation    `json:"confirmation,omitempty"`
 	// Family groups models that share USB IDs, so USB alone cannot tell them apart; the flasher
 	// confirms the model over adb or fastboot before writing.
 	Base   *Base      `json:"base,omitempty"`
@@ -118,9 +148,22 @@ func (p Profile) Below(id string) []Layer {
 //go:embed profiles/*.json
 var builtin embed.FS
 
-// Builtin returns the profiles shipped in the binary, sorted by ID.
+// Builtin returns the profiles shipped in the binary, with the original UFI003 default first.
 func Builtin() ([]Profile, error) {
-	return Load(builtin, "profiles")
+	profiles, err := Load(builtin, "profiles")
+	slices.SortStableFunc(profiles, func(a, b Profile) int {
+		if a.ID == b.ID {
+			return 0
+		}
+		if a.ID == "ufi003" {
+			return -1
+		}
+		if b.ID == "ufi003" {
+			return 1
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	return profiles, err
 }
 
 // Load reads and validates every *.json profile in dir.
@@ -153,6 +196,24 @@ func Load(fsys fs.FS, dir string) ([]Profile, error) {
 
 // Validate checks a profile's structure.
 func (p Profile) Validate() error {
+	if p.Transport != "" && p.Transport != ModeADB && p.Transport != ModeSSH {
+		return fmt.Errorf("unknown profile transport %q", p.Transport)
+	}
+	if p.Transport == ModeSSH {
+		if p.Base != nil || p.Confirmation == nil || p.Confirmation.DeviceTreeModel == "" || p.Confirmation.DebianVersion == "" || p.Confirmation.Architecture != "arm64" {
+			return fmt.Errorf("SSH profiles require model, Debian version and arm64 confirmation, without a flashable base")
+		}
+		modes := map[string]bool{}
+		for _, c := range p.Connections {
+			if modes[c.ID] || c.ID != "usb" && c.ID != "network" || c.Port < 1 || c.Port > 65535 || c.ID == "usb" && c.Host == "" || c.ID == "network" && c.Host != "" {
+				return fmt.Errorf("invalid SSH connection mode")
+			}
+			modes[c.ID] = true
+		}
+		if !modes["usb"] || !modes["network"] {
+			return fmt.Errorf("SSH profiles require USB and network connection modes")
+		}
+	}
 	if p.ID == "" || p.Family == "" {
 		return fmt.Errorf("id and family are required")
 	}
@@ -165,6 +226,9 @@ func (p Profile) Validate() error {
 	for _, m := range p.USB {
 		if !validMode(m.Mode) {
 			return fmt.Errorf("profile %s: unknown USB mode %q", p.ID, m.Mode)
+		}
+		if m.Mode == ModeSSH && (p.Transport != ModeSSH || m.Interface == nil || m.Interface.Class != 2 || m.Interface.SubClass != 13 || m.Interface.Protocol != 0) {
+			return fmt.Errorf("SSH USB signature requires CDC-NCM")
 		}
 		if _, _, err := m.IDs(); err != nil {
 			return fmt.Errorf("profile %s: %w", p.ID, err)
@@ -185,6 +249,9 @@ func (p Profile) Validate() error {
 		}
 		if !validMode(l.Transport) {
 			return fmt.Errorf("profile %s: layer %s: unknown transport %q", p.ID, l.ID, l.Transport)
+		}
+		if p.Transport == ModeSSH && (l.Transport != ModeSSH || l.Destructive || l.ID == "base" && (!l.ReadOnly || l.Guide != "phicommN1")) {
+			return fmt.Errorf("SSH layers must use SSH and the base must be read-only with a guide")
 		}
 		if l.Destructive && destructiveDone {
 			return fmt.Errorf("profile %s: destructive layer %s sits above a non-destructive one", p.ID, l.ID)
@@ -237,5 +304,5 @@ func (p Profile) validateConfig() error {
 }
 
 func validMode(m Mode) bool {
-	return m == ModeADB || m == ModeFastboot || m == ModeEDL
+	return m == ModeADB || m == ModeFastboot || m == ModeEDL || m == ModeSSH
 }

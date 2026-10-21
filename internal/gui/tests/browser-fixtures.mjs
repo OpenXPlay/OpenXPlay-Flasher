@@ -12,6 +12,8 @@ import { join } from "node:path";
 
 const assets = fileURLToPath(new URL("../assets/", import.meta.url));
 const serial = "43fb82bd";
+const n1Profile=JSON.parse(await readFile(new URL("../../profile/profiles/phicomm-n1.json",import.meta.url),"utf8"));
+const ufiProfile=JSON.parse(await readFile(new URL("../../profile/profiles/ufi003.json",import.meta.url),"utf8"));
 const pinnedBase = JSON.parse(await readFile(new URL("../../profile/profiles/ufi003.json", import.meta.url), "utf8")).base;
 const hash = "b9e786f197b6" + "a".repeat(52);
 const text = (en, zh) => ({ en, "zh-CN": zh });
@@ -39,6 +41,7 @@ const artifact = (role, name, size, status = "verified", sha256 = hash) => ({ ro
 });
 
 export function fixture(scene) {
+  if(scene.startsWith("n1-")||scene==="device-type")return n1Fixture(scene);
   let mode = scene.startsWith("prepare-") ? "stock" : scene === "connect-fastboot" ? "fastboot" : scene === "connect-stock" ? "stock" : "adb";
   const state = { target: { profile: "ufi003", device: candidate(mode) }, identity: { mode, serial, product: mode === "fastboot" ? "lk1st" : "", location: "1-3.2" },
     installed: structuredClone(facts), installedStale: false, packages: [], layers: [], choices: [], suggested: mode === "stock" ? "stock" : mode === "fastboot" ? "repair" : "relay",
@@ -99,6 +102,26 @@ export function fixture(scene) {
   return { state, devices, backups };
 }
 
+function n1Fixture(scene) {
+ const data=fixture(scene==="n1-done"?"done-success":"choose");
+ const connected=["n1-choose","n1-done"].includes(scene);
+ const mode=scene==="n1-usb-login"?"usb":"network";
+ const gadget={mode:"ssh",profiles:["phicomm-n1"],usb:{vendorId:0x1d6b,productId:0x104,bus:1,address:7,path:[2],interfaces:[{class:2,subClass:13,protocol:0}],serial:"021122334455"}};
+ const device={...gadget,connection:mode,host:mode==="usb"?"192.168.201.1":"192.168.1.80",port:22,serialno:"021122334455",product:"Phicomm N1"};
+ data.connection={profile:scene==="device-type"?"":"phicomm-n1",...(connected?{device}:{})};
+ data.recent=[{host:"192.168.1.80",port:22,user:"riko",mode:"network"},{host:"192.168.201.1",port:22,user:"riko",mode:"usb"}];
+ data.devices={candidates:scene==="device-type"?[candidate(),gadget]:[connected?device:gadget]};
+ if(!connected){delete data.state.target;delete data.state.identity;delete data.state.installed;delete data.state.job;data.state.layers=[];data.state.choices=[];return data;}
+ data.state.target={profile:"phicomm-n1",device};data.state.identity={mode:"ssh",serial:device.serialno,location:device.host+":22"};
+ Object.assign(data.state.installed,{kernelRelease:"6.12.112-ophub",deviceTreeModel:"Phicomm N1",debianVersion:"13",dpkgArchitecture:"arm64",prettyName:"Debian GNU/Linux 13 (trixie)"});
+ data.state.installed.layers.base="6.12.112-ophub";
+ data.state.layers[0]={layer:"base",name:n1Profile.layers[0].name,installed:"6.12.112-ophub",kernelRelease:"6.12.112-ophub",prettyName:"Debian GNU/Linux 13 (trixie)",readOnly:true,guide:"phicommN1",action:"guide",enabled:true};
+ data.state.choices=data.state.choices.filter((c)=>["full","device","relay"].includes(c.id));
+ data.state.nextSteps={serial:device.serialno,identity:"absent",forward:{active:false},adminUrl:"https://"+device.host+":6975/"};
+ if(data.state.job){Object.assign(data.state.job,{profile:"phicomm-n1",serial:device.serialno,installed:structuredClone(data.state.installed),steps:data.state.choices[0].steps.map((s)=>({...s,status:"ok"})),findings:{}});delete data.state.job.plan;}
+ return data;
+}
+
 const sessions = new Map();
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1");
@@ -114,14 +137,27 @@ const server = createServer(async (req, res) => {
   data.settings ||= { lang: language, verifyPackageListSignature: data.state.catalog.signatureCheck !== false };
   const json = (value, status = 200) => { res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(value)); };
   if (url.pathname === "/boot.js") {
-    const links = Object.fromEntries(["en", "zh-CN"].map((l) => [l, { manual: "https://openxplay.org/"+(l === "en" ? "en/" : "")+"ufi003-flash", tutorial: "https://openxplay.org/ufi003-relay#flasher", download:"https://openxplay.org/ufi003-relay#flasher-download", source: "https://github.com/OpenXPlay/OpenXPlay-Flasher" }]));
+    const links = Object.fromEntries(["en", "zh-CN"].map((l) => [l, { phicommN1:"https://openxplay.org/"+(l==="en"?"en/":"")+"phicomm-n1", manual: "https://openxplay.org/"+(l === "en" ? "en/" : "")+"ufi003-flash", tutorial: "https://openxplay.org/ufi003-relay#flasher", download:"https://openxplay.org/ufi003-relay#flasher-download", source: "https://github.com/OpenXPlay/OpenXPlay-Flasher" }]));
     res.setHeader("Content-Type", "text/javascript"); res.end("window.bootPrefs="+JSON.stringify({ lang: language, systemLang: language, saved: language, verifyPackageListSignature: data.settings.verifyPackageListSignature, web: true, platform: "darwin", links })+";"); return;
   }
   if (url.pathname === "/api/state") {
     if (Number(url.searchParams.get("after")) >= (data.rev || 1)) await new Promise((resolve) => setTimeout(resolve, 1200));
     json({ rev: data.rev || 1, devices: data.devices, install: data.state }); return;
   }
-  if (url.pathname === "/api/profiles") { json([{ id: "ufi003", name: text("UFI003 4G USB dongle", "UFI003 随身 Wi-Fi"), layers: Object.entries(names).map(([id,name]) => ({id,name,destructive:id === "base"})) }]); return; }
+  if(url.pathname==="/api/connection"){json({connection:data.connection||{profile:"ufi003"},recent:data.recent||[]});return;}
+  if(url.pathname==="/api/devices/select"){
+   let body="";for await(const chunk of req)body+=chunk;const input=JSON.parse(body);
+   data.connection={profile:input.profile};
+   if(input.profile==="phicomm-n1"){Object.assign(data,n1Fixture("n1-usb-login"));}else Object.assign(data,fixture("choose"));
+   data.rev=(data.rev||1)+1;json(data.state);return;
+  }
+  if(url.pathname==="/api/ssh/connect"){
+   let body="";for await(const chunk of req)body+=chunk;const input=JSON.parse(body);
+   if(!input.acceptHostKey){json({code:"ssh-host-unknown",host:(input.host||"192.168.201.1")+":22",fingerprint:"SHA256:K3eP9Yg2rVN8tX4JmU6sD1aH5bF0cL7wQzOiRxABcdE"},409);return;}
+   Object.assign(data,n1Fixture("n1-choose"));data.rev=(data.rev||1)+1;json(data.state);return;
+  }
+  if(url.pathname==="/api/ssh/forget"||url.pathname==="/api/ssh/disconnect"){res.writeHead(204);res.end();return;}
+  if (url.pathname === "/api/profiles") { json([ufiProfile,n1Profile]); return; }
   if (url.pathname === "/api/info") {
     json({ name: "OpenXPlay Flasher", version: "vx0w.10-fixture", commit: "bfa5550+changes", license: "AGPL-3.0-only", sourceUrl: "https://github.com/OpenXPlay/OpenXPlay-Flasher",
       platform: "darwin", architecture: "arm64", settingsFile: "/Users/owner/Library/Application Support/OpenXPlay Flasher/settings.json",

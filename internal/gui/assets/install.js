@@ -33,6 +33,7 @@ export function init(boot, runningChanged) {
 
 export function running() { return isRunning(view.state); }
 export function snapshot() { return view.state; }
+export function reset(state) { view.state=null;view.step=0;view.choice="";view.initialized=false;receive(state); }
 export function selectRepair() { choose("repair"); return go(1); }
 
 export function receive(state) {
@@ -167,7 +168,7 @@ function installed(facts, stale) {
   const ids = view.state?.layers?.map((r) => r.layer) || Object.keys(facts.layers);
   return el("div", { class: "layer-summary" }, [freshness(stale),
     el("dl", { class: "installed" }, ids.flatMap((id) => [
-      el("dt", {}, id === "base" ? t("Base system") : name(id)), el("dd", {}, [facts.layers[id] ? displayVersion(id, facts.layers[id]) : t("Not installed"),
+      el("dt", {}, id === "base" ? t("Base system") : name(id)), el("dd", {}, [facts.layers[id] ? (id === "base" && view.state?.layers?.find((r)=>r.layer===id)?.readOnly ? name(id)+(facts.prettyName?" · "+facts.prettyName:"") : displayVersion(id, facts.layers[id])) : t("Not installed"),
         id === "base" && facts.layers[id] ? el("small", { class: "kernel-version" }, t("Kernel: {version}", { version: facts.kernelRelease || facts.layers.base })) : ""]),
     ])),
   ]);
@@ -186,6 +187,9 @@ function connectView() {
 }
 
 function guide() {
+  if (view.state?.target?.profile === "phicomm-n1") return el("div", {class:"base-guide"}, [
+    el("p",{},t("Install Armbian yourself before connecting. The Flasher installs device support and the relay.")),
+    el("a",{href:linksFor(view.boot.links,lang()).phicommN1,"data-open":""},t("Phicomm N1 setup guide"))]);
   return el("div", { class: "base-guide" }, [
     el("p", { class: "note" }, t("Flashing the base needs fastboot; this version cannot do it yet.")),
     el("a", { href: linksFor(view.boot.links, lang()).manual, "data-open": "" }, t("Manual base installation guide")),
@@ -238,6 +242,10 @@ function choiceCard(c, highlight = false) {
 function chooseView() {
   const state = view.state;
   const parts = [title(t("Choose layers")), freshness(state?.installedStale)];
+  const base = state?.layers?.find((row)=>row.readOnly);
+  if(base)parts.push(el("article",{class:"read-only-base"},[el("h3",{},base.name?.[lang()]||base.name?.en),
+    el("span",{class:"tag"},t("Read only")),el("p",{},base.prettyName||state.installed?.prettyName||"—"),
+    el("p",{},t("Kernel: {version}",{version:base.kernelRelease||state.installed?.kernelRelease||"—"})),guide()]));
   const full = selectedChoice(state, "full");
   if (full?.problem?.code === "base-missing" && !state.choices.some((c) => c.destructive)) {
     return [...parts, el("p", { class: "warning", role: "status" }, problemText(t, full.problem)), guide()];
@@ -420,8 +428,8 @@ function confirmation(selected) {
   const device = view.state.target.device;
   return el("div", { class: "confirm" + (selected.destructive ? " destructive-confirm" : ""), role: "alertdialog", "aria-labelledby": "install-confirm-title", "aria-describedby": "install-confirm-warning" }, [
     el("strong", { id: "install-confirm-title" }, t("Start this installation?")),
-    el("p", { id: "install-confirm-warning", class: "warning flash-warning", role: "alert" }, t(confirmationWarning(selected))),
-    el("p", {}, t("Target: {device}", { device: view.state.target.profile + " · " + (device.usb.serial || device.usb.path?.join(".") || "") })),
+    el("p", { id: "install-confirm-warning", class: "warning flash-warning", role: "alert" }, view.state?.target?.device?.connection === "network" ? t("Keep the box powered and connected until installation finishes.") : t(confirmationWarning(selected))),
+    el("p", {}, t("Target: {device}", { device: view.state.target.profile + " · " + (device.host || device.usb?.serial || device.usb?.path?.join(".") || "") })),
     el("ul", {}, selected.needs.filter((n) => n.package).map((n) => el("li", {}, [(n.layer === "base" ? "" : name(n.layer) + ": ") + displayVersion(n.layer, n.package.version), n.layer === "base" && baseKernel() ? el("small", { class: "kernel-version" }, t("Kernel: {version}", { version: baseKernel() })) : ""]))),
     has("device") ? el("p", {}, t("Bluetooth restarts and the device reboots once for the device layer.")) : "",
     has("relay") ? el("p", {}, t("The relay restarts.")) : "",
@@ -549,7 +557,7 @@ function nextStepsCard() {
   if (!next.relay) return el("section", { class: "next-steps", "aria-label": t("Next steps") }, [...parts,
     el("p", {}, t("Install the remaining layers to start the relay.")),
     el("button", { type: "button", disabled: view.busy, onclick: backToLayers }, t("Back to layers")),
-    el("a", { href: lang() === "zh-CN" ? "https://openxplay.org/ufi003-relay#step-network" : "https://openxplay.org/en/ufi003-relay#step-network", "data-open": "" }, t("Continue with network setup")),
+    el("a", { href: view.state?.target?.profile === "phicomm-n1" ? linksFor(view.boot.links,lang()).phicommN1 : lang() === "zh-CN" ? "https://openxplay.org/ufi003-relay#step-network" : "https://openxplay.org/en/ufi003-relay#step-network", "data-open": "" }, t("Continue with network setup")),
   ]);
   if (next.identity === "present") parts.push(el("div", { class: "identity-success result ok", role: "status" }, [
     el("strong", {}, t("Identity added")), el("p", {}, t("Files: {files}", { files: "identity.pk8 · certificate.p7b" })),
@@ -570,9 +578,16 @@ function nextStepsCard() {
     } }, t("Check identity status")));
   }
   if (view.identityMessage && next.identity !== "present") parts.push(el("p", { class: "check ok" }, view.identityMessage));
+  if(view.state?.target?.device?.mode === "ssh") {
+    const host=view.state.target.device.host;
+    const address=view.state.nextSteps?.adminUrl || "https://"+(host.includes(":")?"["+host+"]":host)+":6975/";
+    parts.push(el("h3",{},t("Open the relay admin page")),el("a",{id:"admin-open",href:address,"data-open":""},t("Open the relay admin page")),
+      el("p",{},t("Expect a certificate warning in your browser. The first-time password is on the login page.")));
+  } else {
   parts.push(el("h3", {}, t("Open the relay admin page over USB")),
     el("p", {}, t("Expect a certificate warning in your browser. The first-time password is on the login page.")),
     el("button", { id: "admin-open", type: "button", disabled, onclick: openAdmin }, t("Open the relay admin page over USB")));
+  }
   if (next.forward) parts.push(el("a", { href: next.forward.address, "data-open": "", class: "admin-address" }, next.forward.address),
     el("button", { type: "button", disabled: view.busy, onclick: async () => {
       try { const forward = await api("admin/forward/stop", {}); view.state = { ...view.state, nextSteps: { ...view.state.nextSteps, forward } }; }
@@ -580,7 +595,7 @@ function nextStepsCard() {
       render();
     } }, t("Close USB admin connection")));
   if (view.nextError) parts.push(el("p", { class: "error-box", role: "alert" }, problemText(t, view.nextError)));
-  parts.push(el("a", { href: lang() === "zh-CN" ? "https://openxplay.org/ufi003-relay#step-network" : "https://openxplay.org/en/ufi003-relay#step-network", "data-open": "" }, t("Continue with network setup")));
+  parts.push(el("a", { href: view.state?.target?.profile === "phicomm-n1" ? linksFor(view.boot.links,lang()).phicommN1 : lang() === "zh-CN" ? "https://openxplay.org/ufi003-relay#step-network" : "https://openxplay.org/en/ufi003-relay#step-network", "data-open": "" }, t("Continue with network setup")));
   return el("section", { class: "next-steps", "aria-label": t("Next steps") }, parts);
 }
 
@@ -598,7 +613,7 @@ export function render() {
   signatureNotice.hidden = (view.state?.catalog?.signatureCheck ?? view.boot.verifyPackageListSignature) !== false;
   signatureNotice.textContent = t("Signature check is off: the package list is not verified");
   banner.hidden = !running();
-  banner.textContent = t(WARNING_TEXT.running);
+  banner.textContent = view.state?.target?.device?.connection === "network" ? t("Keep the box powered and connected until installation finishes.") : t(WARNING_TEXT.running);
   banner.classList.toggle("critical", !!view.state?.job?.steps?.some((s) => s.status === "running" && s.critical));
   document.getElementById("install-connect").hidden = step !== 0;
   const renderStep = [connectView, chooseView, prepareView, backupView, flashView, () => view.state?.job ? [jobView(view.state.job)] : []][step];

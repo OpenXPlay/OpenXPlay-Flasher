@@ -119,6 +119,10 @@ func (h *host) OpenPackages(layer string) ([]string, error) {
 func (h *host) OpenIdentity() ([]string, error) {
 	return h.app.Dialog.OpenFile().CanChooseFiles(true).PromptForMultipleSelection()
 }
+func (h *host) OpenSSHKey() (string, error) {
+	return h.app.Dialog.OpenFile().SetTitle("SSH private key / SSH 私钥").PromptForSingleSelection()
+}
+
 func (h *host) OpenArtifact() (string, error) {
 	return h.app.Dialog.OpenFile().CanChooseFiles(true).PromptForSingleSelection()
 }

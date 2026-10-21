@@ -258,7 +258,7 @@ func parseManifest(data []byte) (Manifest, error) {
 	if m.Stage == "relay" && m.Transport == "" {
 		m.Transport = "adb"
 	}
-	if !token.MatchString(m.Name) || !validVersion(m.Version) || m.Writes != "files" || m.Transport != "adb" || m.Install == "" || m.Verify == "" || m.Rollback == "" {
+	if !token.MatchString(m.Name) || !validVersion(m.Version) || m.Writes != "files" || (m.Transport != "adb" && m.Transport != "ssh") || m.Install == "" || m.Verify == "" || m.Rollback == "" {
 		return m, errors.New("missing or invalid manifest fields")
 	}
 	if !strings.HasPrefix(m.DeviceDir, "/var/cache/openxplay/") || !safeRelative(strings.TrimPrefix(m.DeviceDir, "/")) {
@@ -286,7 +286,7 @@ func parseManifest(data []byte) (Manifest, error) {
 			return m, errors.New("missing or invalid relay fields")
 		}
 	} else {
-		if !token.MatchString(m.Device) || m.Preflight == "" || r.KernelRelease == "" || r.DeviceTreeModel == "" || m.Reboot != "required" || len(m.Packages) == 0 || m.Success.Preflight != "OXP-STAGE device preflight-ok" || m.Success.Verify != "OXP-STAGE device verified" {
+		if !token.MatchString(m.Device) || m.Preflight == "" || r.DeviceTreeModel == "" || m.Reboot != "required" || len(m.Packages) == 0 || m.Success.Preflight != "OXP-STAGE device preflight-ok" || m.Success.Verify != "OXP-STAGE device verified" {
 			return m, errors.New("missing or invalid device fields")
 		}
 		seen := map[string]bool{}

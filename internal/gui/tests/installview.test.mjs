@@ -256,3 +256,19 @@ for (const language of ["en", "zh-CN"]) test("signature notice persists through 
   s.catalog.signatureCheck = true; page.receive(s);
   assert.equal(notice.hidden, true);
 });
+
+for (const language of ["en", "zh-CN"]) test("N1 read-only Armbian, device/relay choices and direct admin link in " + language, async () => {
+  const d=dom();setLang(language);
+  const saved=globalThis.setInterval;globalThis.setInterval=()=>0;
+  const page=await import("../assets/install.js?n1-"+language);page.init({...boot,links:{[language]:{phicommN1:"https://openxplay.org/phicomm-n1"}}});globalThis.setInterval=saved;
+  const s=snapshot();s.target={profile:"phicomm-n1",device:{mode:"ssh",connection:"network",host:"n1.test",serialno:"021122334455"}};
+  s.layers[0]={...s.layers[0],readOnly:true,guide:"phicommN1",name:{en:"Armbian","zh-CN":"Armbian"},prettyName:"Debian GNU/Linux 13 (trixie)",kernelRelease:"6.12.112-ophub"};
+  page.reset(s);await d.get("install-continue").click();
+  assert.ok(d.root.textContent.includes("Armbian"));assert.ok(d.root.textContent.includes(t("Read only")));assert.ok(d.root.textContent.includes("6.12.112-ophub"));
+  assert.ok(d.get("choice-device"));assert.ok(d.get("choice-relay"));assert.equal(d.get("choice-base"),undefined);
+  const job={status:"succeeded",started:"2026-10-21T10:00:00Z",finished:"2026-10-21T10:01:00Z",steps:[],observed:true,installed:s.installed,left:"installed"};
+  const nextSteps={serial:"021122334455",identity:"absent",adminUrl:"https://n1.test:6975/",forward:{active:false}};page.receive({...s,job,nextSteps});
+  assert.ok(d.root.textContent.includes(t("Add your CarPlay identity")));
+  assert.equal(d.root.textContent.includes("OpenStick"),false);
+  assert.equal(d.get("admin-open").tag,"a");assert.equal(d.get("admin-open").href,"https://n1.test:6975/");
+});

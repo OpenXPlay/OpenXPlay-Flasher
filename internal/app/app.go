@@ -17,6 +17,7 @@ import (
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/power"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
+	sshdev "github.com/OpenXPlay/OpenXPlay-Flasher/internal/ssh"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 )
@@ -31,15 +32,18 @@ type Events interface {
 
 // Service owns one flasher session.
 type Service struct {
-	background sync.WaitGroup
-	stopping   bool
-	adminMu    sync.Mutex
-	admin      *adminTunnel
-	nextSteps  NextSteps
-	profiles   []profile.Profile
-	detector   device.Detector
-	events     Events
-	interval   time.Duration
+	selectedProfile string
+	sshSession      *sshSession
+	sshDialer       sshdev.Dialer
+	background      sync.WaitGroup
+	stopping        bool
+	adminMu         sync.Mutex
+	admin           *adminTunnel
+	nextSteps       NextSteps
+	profiles        []profile.Profile
+	detector        device.Detector
+	events          Events
+	interval        time.Duration
 
 	catalogMu                    sync.Mutex
 	catalogSource                CatalogSource
@@ -157,6 +161,9 @@ func (s *Service) Stop() {
 		<-installDone
 	}
 	s.background.Wait()
+	s.mu.Lock()
+	s.sshSession = nil
+	s.mu.Unlock()
 }
 
 // Profiles returns the supported device models.

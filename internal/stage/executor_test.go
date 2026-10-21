@@ -177,7 +177,7 @@ func TestExecutorFullInstall(t *testing.T) {
 	if events[0].Status != "running" || events[len(events)-1].Status != "succeeded" || events[0].Steps[0].Status != "pending" {
 		t.Fatal("progress snapshots were changed after publishing")
 	}
-	if !strings.Contains(job.Log, "preflight output") || !strings.Contains(job.Log, "adb returned after reboot") {
+	if !strings.Contains(job.Log, "preflight output") || !strings.Contains(job.Log, "Device returned after reboot") {
 		t.Fatal("command output missing from log")
 	}
 	for _, s := range job.Steps {

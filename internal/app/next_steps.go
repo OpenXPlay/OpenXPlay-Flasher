@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
-	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/base"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/identity"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
@@ -29,6 +28,7 @@ type ForwardState struct {
 	Serial  string `json:"serial,omitempty"`
 }
 type NextSteps struct {
+	AdminURL string       `json:"adminUrl,omitempty"`
 	Identity string       `json:"identity"` // unknown, absent, present; never credential data
 	Serial   string       `json:"serial,omitempty"`
 	Forward  ForwardState `json:"forward"`
@@ -87,13 +87,13 @@ func (s *Service) nextDevice(ctx context.Context) (adb.Device, string, error) {
 		return nil, "", err
 	}
 	s.mu.Lock()
-	connector, expected := s.adb, s.baseIdentity
+	expected := s.baseIdentity
 	s.mu.Unlock()
-	d, err := connector.Connect(ctx, target.Device.USB)
+	d, err := s.openDevice(ctx, target.Device)
 	if err != nil {
 		return nil, "", err
 	}
-	serial, err := base.LinuxSerial(ctx, d)
+	serial, err := s.boardSerial(ctx, d)
 	if err == nil && expected != nil && serial != expected.Serial {
 		err = &stage.Problem{Code: "serial-mismatch"}
 	}
@@ -284,7 +284,7 @@ func (s *Service) ForwardStart(ctx context.Context) (ForwardState, error) {
 				// A server transport id can be reused after a reconnect. Bind each new
 				// stream to the board serial before forwarding any browser traffic.
 				check, stopCheck := context.WithTimeout(life, 5*time.Second)
-				actual, err := base.LinuxSerial(check, d)
+				actual, err := s.boardSerial(check, d)
 				stopCheck()
 				if err != nil || actual != serial {
 					cancel()

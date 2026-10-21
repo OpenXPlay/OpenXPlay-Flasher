@@ -44,6 +44,9 @@ var configErrors = []struct {
 }
 
 func writeConfigError(w http.ResponseWriter, err error) {
+	if writeSSHError(w, err) {
+		return
+	}
 	for _, e := range configErrors {
 		if errors.Is(err, e.err) {
 			writeError(w, http.StatusConflict, e.code, err.Error())

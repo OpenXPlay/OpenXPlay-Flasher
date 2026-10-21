@@ -9,6 +9,7 @@ import { t, setLang, lang, translateStatic } from "./i18n.js";
 import { deviceView, modelView, modeLabel, usbId, usbPort } from "./devices.js";
 import { api, el } from "./ui.js";
 import { problemText } from "./installlogic.js";
+import * as connectionView from "./connection.js";
 import * as configView from "./config.js";
 import * as installView from "./install.js";
 import * as settingsView from "./settings.js";
@@ -18,6 +19,8 @@ const boot = window.bootPrefs || { lang: "en", systemLang: "en", saved: "", link
 const state = { info: null, infoError: false, profiles: [], devices: null, rev: 0, offline: false, othersOpen: false,
   signatureCheck: boot.verifyPackageListSignature !== false, signatureBusy: false, signatureError: false,
   view: "install", savedLang: boot.saved || "", languageBusy: false, languageError: false, designation: "", designationBusy: false };
+
+function selectionReady() { return !!connectionView.selectedProfile() || state.profiles.length === 1; }
 
 function status(kind, title, text) {
   return el("div", { class: "status " + kind }, [
@@ -57,7 +60,14 @@ function deviceCard(c) {
 function renderDevices() {
   const root = document.getElementById("devices");
   const focused = root.contains(document.activeElement) ? document.activeElement.dataset.focus : "";
-  const view = deviceView(state.devices);
+  const connection = connectionView.renderConnection({root,chooser:document.getElementById("device-selection"),profiles:state.profiles,devices:state.devices,running:installView.running()});
+  document.getElementById("install").hidden = !connection.ready;
+  const configTab=document.querySelector('[data-view="config"]');
+  if(configTab)configTab.disabled=installView.running()||!selectionReady();
+  if (connection.handled) return;
+  const selected = connectionView.selectedProfile();
+  const devices = selected && state.devices ? {...state.devices,candidates:(state.devices.candidates||[]).filter((c)=>c.profiles?.includes(selected)||!c.profiles?.length)} : state.devices;
+  const view = deviceView(devices);
   const parts = [];
   if (state.offline) parts.push(el("div", { class: "error-box" }, t("Lost contact with the flasher. Retrying…")));
   switch (view.status) {
@@ -192,6 +202,7 @@ function render() {
 }
 
 function showView(name) {
+  if(name === "config" && !selectionReady()) name="install";
   if (!viewAllowed(name, installView.running())) {
     history.replaceState(null, "", "#" + state.view);
     return;
@@ -205,7 +216,7 @@ function showView(name) {
   document.getElementById("view-config").hidden = name !== "config";
   document.getElementById("view-settings").hidden = name !== "settings";
   if (name === "config") configView.refresh();
-  if (name === "install") installView.refresh();
+  if (name === "install" && selectionReady()) installView.refresh();
   if (name === "settings") loadInfo();
 }
 
@@ -225,7 +236,7 @@ async function follow() {
       if (next.rev > 0) state.devices = next.devices;
       state.offline = false;
       if (changed) {
-        if (next.install) {
+        if (next.install && selectionReady()) {
           installView.receive(next.install);
           state.signatureCheck = next.install.catalog?.signatureCheck !== false;
           if (state.info) state.info.verifyPackageListSignature = state.signatureCheck;
@@ -233,7 +244,7 @@ async function follow() {
         }
         renderDevices();
         if (devicesChanged && state.view === "config") configView.refresh();
-        if (devicesChanged && state.view === "install") installView.refresh();
+        if (devicesChanged && state.view === "install" && selectionReady()) installView.refresh();
       }
     } catch (err) {
       if (!state.offline) {
@@ -293,5 +304,5 @@ installView.init(boot, (running) => {
 render();
 if (window.location.hash) showView(viewFromHash(window.location.hash));
 if (state.view !== "settings") loadInfo();
-api("profiles").then((profiles) => { state.profiles = profiles || []; renderDevices(); }).catch((err) => console.error(err));
+api("profiles").then(async (profiles) => { state.profiles = profiles || []; await connectionView.initConnection(boot,renderDevices,installView.reset); renderDevices(); if(selectionReady())await installView.refresh(); }).catch((err) => console.error(err));
 follow();
