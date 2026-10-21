@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Created by riko chen on 2026-10-21
 
-# Builds, signs and publishes a release for a tag vX.Y.Z[-PRE]. Signing is optional per platform:
+# Builds, signs and publishes a release for a tag vX.Y.Z or vX.Y.Z-beta.N. Signing is optional per platform:
 # without its secrets a build is published ad hoc signed (macOS) or unsigned (Windows).
 #   macOS: MACOS_CERT_P12_BASE64, MACOS_CERT_PASSWORD, MACOS_SIGN_IDENTITY (Developer ID Application);
 #          notarization: NOTARY_KEY_BASE64 (.p8), NOTARY_KEY_ID, NOTARY_ISSUER.
@@ -133,7 +133,9 @@ jobs:
         run: cd dist && sha256sum *.dmg *.exe > SHA256SUMS && cat SHA256SUMS
       - uses: actions/attest-build-provenance@v2
         with:
-          subject-path: "dist/*.dmg, dist/*.exe"
+          subject-path: |
+            dist/*.dmg
+            dist/*.exe
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
