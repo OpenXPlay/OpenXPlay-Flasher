@@ -12,7 +12,8 @@ PKG       := github.com/OpenXPlay/OpenXPlay-Flasher/internal/version
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//; s/[^A-Za-z0-9._+-]/-/g')
 VERSION   := $(or $(VERSION),dev)
 COMMIT    ?= $(shell git rev-parse --short HEAD 2>/dev/null)
-LDFLAGS   := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT)
+BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS   := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildDate=$(BUILD_DATE)
 TAGS      := production
 # Numeric part of the version, for Windows file versions and the macOS bundle version, which
 # take numbers only (0.1.0-rc.1 -> 0.1.0).

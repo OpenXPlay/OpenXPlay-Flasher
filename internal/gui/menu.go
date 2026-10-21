@@ -8,13 +8,11 @@ package gui
 
 import (
 	"github.com/wailsapp/wails/v3/pkg/application"
-
-	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/version"
 )
 
 // macMenu is the macOS menu bar in the UI language. It replaces Wails' default menu, whose Help
 // item loads wails.io into the app's own window; Help here opens pages in the browser.
-func macMenu(lang string, openURL func(string)) *application.Menu {
+func macMenu(lang string, openURL func(string), showSettings func()) *application.Menu {
 	s := menuStrings(lang)
 	label := func(m *application.Menu, role application.Role, text string) {
 		m.AddRole(role)
@@ -26,6 +24,8 @@ func macMenu(lang string, openURL func(string)) *application.Menu {
 
 	app := bar.AddSubmenu(appTitle(lang))
 	label(app, application.About, s.About)
+	app.AddSeparator()
+	app.Add(s.Settings).SetAccelerator("CmdOrCtrl+,").OnClick(func(*application.Context) { showSettings() })
 	app.AddSeparator()
 	label(app, application.Hide, s.Hide)
 	label(app, application.HideOthers, s.HideOthers)
@@ -47,7 +47,10 @@ func macMenu(lang string, openURL func(string)) *application.Menu {
 	label(window, application.Zoom, s.Zoom)
 
 	help := bar.AddSubmenu(s.Help)
-	help.Add(s.Website).OnClick(func(*application.Context) { openURL(siteURL(lang)) })
-	help.Add(s.Source).OnClick(func(*application.Context) { openURL(version.SourceURL) })
+	links := linksFor(lang)
+	help.Add(s.Tutorial).OnClick(func(*application.Context) { openURL(links.Tutorial) })
+	help.Add(s.Download).OnClick(func(*application.Context) { openURL(links.Download) })
+	help.Add(s.Website).OnClick(func(*application.Context) { openURL(links.Website) })
+	help.Add(s.Source).OnClick(func(*application.Context) { openURL(links.Source) })
 	return bar
 }

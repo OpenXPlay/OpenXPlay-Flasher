@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
@@ -35,11 +36,14 @@ func (f *fakeNative) SaveFile(string, []byte) (string, error) { return "", errNo
 
 func (f *fakeNative) OpenFile() (string, []byte, error) { return "", nil, errNoDialogs }
 
+func (f *fakeNative) OpenPackages() ([]string, error) { return nil, errNoDialogs }
+
 type fixture struct {
 	handler  http.Handler
 	hub      *Hub
 	native   *fakeNative
 	settings *SettingsStore
+	service  *app.Service
 }
 
 func newFixture(t *testing.T) fixture {
@@ -52,7 +56,7 @@ func newFixture(t *testing.T) fixture {
 		t.Fatal(err)
 	}
 	h := Handler(Deps{Service: svc, Hub: hub, Settings: settings, Native: native, SystemLang: "zh-Hans-CN"})
-	return fixture{handler: h, hub: hub, native: native, settings: settings}
+	return fixture{handler: h, hub: hub, native: native, settings: settings, service: svc}
 }
 
 func (f fixture) do(method, target, body string) *httptest.ResponseRecorder {
@@ -72,15 +76,17 @@ func (f fixture) do(method, target, body string) *httptest.ResponseRecorder {
 func TestStaticFilesHaveExplicitTypes(t *testing.T) {
 	f := newFixture(t)
 	for path, want := range map[string]string{
-		"/":             "text/html; charset=utf-8",
-		"/app.js":       "text/javascript; charset=utf-8",
-		"/i18n.js":      "text/javascript; charset=utf-8",
-		"/app.css":      "text/css; charset=utf-8",
-		"/logo.png":     "image/png",
-		"/boot.js":      "text/javascript; charset=utf-8",
-		"/api/info":     "application/json",
-		"/api/state":    "application/json",
-		"/api/profiles": "application/json",
+		"/":                 "text/html; charset=utf-8",
+		"/app.js":           "text/javascript; charset=utf-8",
+		"/i18n.js":          "text/javascript; charset=utf-8",
+		"/settings.js":      "text/javascript; charset=utf-8",
+		"/settingslogic.js": "text/javascript; charset=utf-8",
+		"/app.css":          "text/css; charset=utf-8",
+		"/logo.png":         "image/png",
+		"/boot.js":          "text/javascript; charset=utf-8",
+		"/api/info":         "application/json",
+		"/api/state":        "application/json",
+		"/api/profiles":     "application/json",
 	} {
 		rec := f.do("GET", path, "")
 		if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != want {
@@ -94,6 +100,21 @@ func TestStaticFilesHaveExplicitTypes(t *testing.T) {
 	}
 	if rec := f.do("GET", "/api/nothing", ""); rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "not_found") {
 		t.Errorf("unknown API = %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestInfoIncludesBuildHostAndDataPaths(t *testing.T) {
+	f := newFixture(t)
+	f.service.SetADB(adb.NewConnector())
+	rec := f.do("GET", "/api/info", "")
+	var got app.Info
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := f.service.Info()
+	want.SettingsFile = f.settings.path
+	if rec.Code != http.StatusOK || got != want || got.ADB.KeyDir == "" {
+		t.Fatalf("info = %+v, want %+v (status %d)", got, want, rec.Code)
 	}
 }
 
@@ -122,6 +143,13 @@ func TestBootFollowsSystemThenSavedLanguage(t *testing.T) {
 	if got := f.settings.Load().Lang; got != "en" {
 		t.Fatalf("saved language %q", got)
 	}
+	if rec := f.do("POST", "/api/settings", `{"lang":""}`); rec.Code != http.StatusOK || f.native.lang != LangChinese {
+		t.Fatalf("follow system = %d, native language %q", rec.Code, f.native.lang)
+	}
+	if body := f.do("GET", "/boot.js", "").Body.String(); !strings.Contains(body, `"lang":"zh-CN"`) ||
+		!strings.Contains(body, `"saved":""`) || !strings.Contains(body, `"systemLang":"zh-CN"`) {
+		t.Fatalf("boot.js after following the system: %s", body)
+	}
 }
 
 func TestPostsNeedJSON(t *testing.T) {
@@ -140,7 +168,8 @@ func TestOpenOnlyKnownSites(t *testing.T) {
 	if rec := f.do("POST", "/api/open", `{"url":"https://github.com/OpenXPlay/OpenXPlay-Flasher"}`); rec.Code != http.StatusNoContent {
 		t.Fatalf("open project page = %d %s", rec.Code, rec.Body)
 	}
-	for _, url := range []string{"https://example.com/", "file:///etc/passwd", "https://openxplay.org.evil.test/"} {
+	for _, url := range []string{"https://example.com/", "file:///etc/passwd", "https://openxplay.org.evil.test/",
+		"http://openxplay.org/", "https://openxplay.org@evil.test/", "https://github.com/OpenXPlay-evil/"} {
 		if rec := f.do("POST", "/api/open", `{"url":"`+url+`"}`); rec.Code != http.StatusForbidden {
 			t.Errorf("open %s = %d", url, rec.Code)
 		}
@@ -200,7 +229,8 @@ func TestHubIgnoresUnknownEvents(t *testing.T) {
 func TestNativeTextInBothLanguages(t *testing.T) {
 	for _, lang := range []string{LangEnglish, LangChinese} {
 		m := menuStrings(lang)
-		for name, v := range map[string]string{"About": m.About, "Quit": m.Quit, "Help": m.Help, "Website": m.Website, "Source": m.Source} {
+		for name, v := range map[string]string{"About": m.About, "Quit": m.Quit, "Help": m.Help, "Website": m.Website, "Source": m.Source,
+			"Settings": m.Settings, "Tutorial": m.Tutorial, "Download": m.Download} {
 			if v == "" {
 				t.Errorf("%s menu %s is empty", lang, name)
 			}

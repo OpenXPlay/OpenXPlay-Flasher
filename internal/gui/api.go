@@ -36,6 +36,8 @@ type Native interface {
 	SaveFile(name string, data []byte) (string, error)
 	// OpenFile asks for a file on this computer and reads it; name is "" when cancelled.
 	OpenFile() (name string, data []byte, err error)
+	// OpenPackages returns paths from a native multi-file picker without reading the payloads.
+	OpenPackages() ([]string, error)
 }
 
 // errNoDialogs: browser mode has no native dialogs; the page uses the browser's own.
@@ -79,10 +81,12 @@ func Handler(d Deps) http.Handler {
 	mux.HandleFunc("GET /boot.js", func(w http.ResponseWriter, r *http.Request) {
 		saved := d.Settings.Load().Lang
 		prefs, _ := json.Marshal(map[string]any{
-			"lang":     UILang(saved, d.SystemLang),
-			"saved":    saved,
-			"platform": runtime.GOOS,
-			"web":      d.Web,
+			"lang":       UILang(saved, d.SystemLang),
+			"saved":      saved,
+			"systemLang": UILang("", d.SystemLang),
+			"links":      helpLinks,
+			"platform":   runtime.GOOS,
+			"web":        d.Web,
 		})
 		w.Header().Set("Content-Type", contentTypes[".js"])
 		w.Header().Set("Cache-Control", "no-store")
@@ -90,7 +94,9 @@ func Handler(d Deps) http.Handler {
 	})
 
 	mux.HandleFunc("GET /api/info", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, d.Service.Info())
+		info := d.Service.Info()
+		info.SettingsFile = d.Settings.path
+		writeJSON(w, http.StatusOK, info)
 	})
 
 	mux.HandleFunc("GET /api/profiles", func(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +158,7 @@ func Handler(d Deps) http.Handler {
 	})
 
 	configRoutes(mux, d)
+	installRoutes(mux, d)
 	mux.Handle("/", staticHandler())
 	return mux
 }

@@ -58,7 +58,7 @@ jobs:
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           echo "SIGN_IDENTITY=$MACOS_SIGN_IDENTITY" >> "$GITHUB_ENV"
       - name: Build the app and disk image
-        run: make dmg VERSION="${GITHUB_REF_NAME#v}" SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+        run: make dmg VERSION="${GITHUB_REF_NAME#v}" BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" SIGN_IDENTITY="${SIGN_IDENTITY:--}"
       - name: Notarize
         if: env.MACOS_CERT_P12_BASE64 != '' && env.NOTARY_KEY_BASE64 != ''
         run: |
@@ -79,7 +79,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build
-        run: make windows VERSION="${GITHUB_REF_NAME#v}"
+        run: make windows VERSION="${GITHUB_REF_NAME#v}" BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       - uses: actions/upload-artifact@v4
         with:
           name: windows-unsigned

@@ -32,6 +32,8 @@ func (webNative) SaveFile(string, []byte) (string, error) { return "", errNoDial
 
 func (webNative) OpenFile() (string, []byte, error) { return "", nil, errNoDialogs }
 
+func (webNative) OpenPackages() ([]string, error) { return nil, errNoDialogs }
+
 // SetLang: the page titles the browser tab itself, and a browser has no app menu.
 func (webNative) SetLang(string) {}
 

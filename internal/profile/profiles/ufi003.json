@@ -30,7 +30,9 @@
         "zh-CN": "基础系统（OpenStick Debian 11）"
       },
       "transport": "fastboot",
-      "destructive": true
+      "destructive": true,
+      "kernelRelease": "5.15.0-handsomekernel+",
+      "deviceTreeModel": "Handsome Openstick"
     },
     {
       "id": "device",
@@ -39,7 +41,8 @@
         "zh-CN": "设备支持"
       },
       "transport": "adb",
-      "destructive": false
+      "destructive": false,
+      "package": "openxplay-ufi003"
     },
     {
       "id": "relay",
@@ -48,7 +51,8 @@
         "zh-CN": "OpenXPlay 中继"
       },
       "transport": "adb",
-      "destructive": false
+      "destructive": false,
+      "package": "openxplay-relay"
     }
   ],
   "service": "openxplay-relay.service",

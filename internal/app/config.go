@@ -78,7 +78,9 @@ func (s *Service) ConfigTarget() (ConfigTarget, error) {
 
 // withEditor connects to the target device for one operation; operations never overlap.
 func (s *Service) withEditor(ctx context.Context, fn func(*config.Editor, ConfigTarget) error) error {
-	s.configMu.Lock()
+	if !s.configMu.TryLock() {
+		return ErrDeviceBusy
+	}
 	defer s.configMu.Unlock()
 	t, err := s.ConfigTarget()
 	if err != nil {

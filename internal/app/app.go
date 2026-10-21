@@ -15,8 +15,8 @@ import (
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/config"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
-	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/version"
 )
 
 // EventDevices carries a device.Snapshot each time the attached candidates change.
@@ -27,15 +27,6 @@ type Events interface {
 	Emit(name string, data any)
 }
 
-// Info identifies the build, for the about view and diagnostics.
-type Info struct {
-	Name      string `json:"name"`
-	Version   string `json:"version"`
-	Commit    string `json:"commit"`
-	License   string `json:"license"`
-	SourceURL string `json:"sourceUrl"`
-}
-
 // Service owns one flasher session.
 type Service struct {
 	profiles []profile.Profile
@@ -43,13 +34,22 @@ type Service struct {
 	events   Events
 	interval time.Duration
 
-	mu      sync.Mutex
-	current device.Snapshot
-	cancel  context.CancelFunc
-	done    chan struct{}
-	adb     adb.Connector
+	mu             sync.Mutex
+	current        device.Snapshot
+	cancel         context.CancelFunc
+	done           chan struct{}
+	adb            adb.Connector
+	lifeCtx        context.Context
+	packages       []*stage.Package
+	installTarget  *InstallTarget
+	installed      *stage.Facts
+	installProblem *stage.Problem
+	installJob     *stage.Job
+	installCancel  context.CancelFunc
+	installDone    chan struct{}
+	newExecutor    func(profile.Profile, []*stage.Package) *stage.Executor
 
-	// configMu keeps configuration operations from overlapping on the device.
+	// configMu serialises configuration operations and holds the device for an entire install.
 	configMu sync.Mutex
 	// newEditor lets tests replace the device-side defaults (backup folder, health wait).
 	newEditor func(adb.Device) *config.Editor
@@ -78,9 +78,11 @@ func (s *Service) Start(ctx context.Context) {
 		return
 	}
 	ctx, s.cancel = context.WithCancel(ctx)
-	s.done = make(chan struct{})
+	s.lifeCtx = ctx
+	done := make(chan struct{})
+	s.done = done
 	go func() {
-		defer close(s.done)
+		defer close(done)
 		device.Watch(ctx, s.detector, s.interval, func(snap device.Snapshot) {
 			s.mu.Lock()
 			s.current = snap
@@ -94,22 +96,16 @@ func (s *Service) Start(ctx context.Context) {
 func (s *Service) Stop() {
 	s.mu.Lock()
 	cancel, done := s.cancel, s.done
+	installCancel, installDone := s.installCancel, s.installDone
 	s.cancel, s.done = nil, nil
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
 		<-done
 	}
-}
-
-// Info returns the build identity.
-func (s *Service) Info() Info {
-	return Info{
-		Name:      version.Name,
-		Version:   version.Version,
-		Commit:    version.Commit,
-		License:   version.License,
-		SourceURL: version.SourceURL,
+	if installCancel != nil {
+		installCancel()
+		<-installDone
 	}
 }
 

@@ -8,8 +8,9 @@
 package version
 
 var (
-	Version = "dev"
-	Commit  = ""
+	Version   = "dev"
+	Commit    = ""
+	BuildDate = ""
 )
 
 const (

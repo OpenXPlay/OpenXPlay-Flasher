@@ -307,7 +307,7 @@ func (e *Editor) Write(ctx context.Context, req WriteRequest) (WriteResult, erro
 		newMode = "644"
 	}
 	// Backups are named after this computer's clock: the device may have no real-time clock.
-	stamp := time.Now().UTC().Format("20060102-150405")
+	stamp := time.Now().UTC().Format("20060102-150405.000000000")
 	out, err := e.run(ctx, replaceScript, target, staged, e.backupDir(target), strconv.Itoa(e.Keep), newMode, stamp)
 	if err != nil {
 		_, _ = e.run(ctx, `rm -f "$1"`, staged)

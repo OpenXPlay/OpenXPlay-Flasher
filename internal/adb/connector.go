@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 )
@@ -17,6 +18,9 @@ import (
 type AutoConnector struct {
 	Server ServerConnector
 	USB    USBConnector
+
+	mu            sync.Mutex
+	lastTransport string
 }
 
 // NewConnector returns the connector the app uses: the adb server at DefaultServerAddr, else
@@ -26,6 +30,7 @@ func NewConnector() Connector { return &AutoConnector{} }
 func (a *AutoConnector) Connect(ctx context.Context, dev usb.DeviceInfo) (Device, error) {
 	d, serr := a.Server.Connect(ctx, dev)
 	if serr == nil {
+		a.used("server")
 		return d, nil
 	}
 	if !errors.Is(serr, errNoServer) && !errors.Is(serr, ErrNoDevice) {
@@ -34,6 +39,7 @@ func (a *AutoConnector) Connect(ctx context.Context, dev usb.DeviceInfo) (Device
 	d, uerr := a.USB.Connect(ctx, dev)
 	switch {
 	case uerr == nil:
+		a.used("usb")
 		return d, nil
 	case !errors.Is(uerr, usb.ErrTransfersUnsupported):
 		return nil, uerr

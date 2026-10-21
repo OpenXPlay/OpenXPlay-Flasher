@@ -63,7 +63,10 @@ type Layer struct {
 	// Transport is the mode the layer is written in.
 	Transport Mode `json:"transport"`
 	// Destructive layers erase the device; they need a verified backup before any write.
-	Destructive bool `json:"destructive"`
+	Destructive     bool   `json:"destructive"`
+	KernelRelease   string `json:"kernelRelease,omitempty"`
+	DeviceTreeModel string `json:"deviceTreeModel,omitempty"`
+	Package         string `json:"package,omitempty"`
 }
 
 // ConfigFile is a configuration file on the device that the configuration window offers.

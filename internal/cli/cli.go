@@ -32,6 +32,8 @@ Commands:
   devices          list candidate devices once
   watch            print candidate devices whenever they change (Ctrl-C to stop)
   profiles         list the supported device models and their layers
+  install [-only device|relay] [-downgrade] [-yes] PACKAGE...
+                   install checked local layer packages over adb (asks for y without -yes)
   config-get PATH  print a configuration file of the connected device
   config-put PATH FILE
                    write FILE to PATH on the device (backup first; the relay restarts for
@@ -63,6 +65,9 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	asJSON := fs.Bool("json", false, "print JSON")
 	addr := fs.String("addr", "127.0.0.1:0", "loopback address for web")
 	restart := fs.Bool("restart", false, "restart the relay after config-put")
+	only := fs.String("only", "", "install only device or relay")
+	downgrade := fs.Bool("downgrade", false, "allow an older relay version")
+	yes := fs.Bool("yes", false, "install without asking for y")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -81,6 +86,9 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	var events app.Events = printer{out: stdout, json: *asJSON}
 	if cmd == "config-get" || cmd == "config-put" {
 		events = quiet{} // their stdout is the file or the outcome, nothing else
+	}
+	if cmd == "install" {
+		events = &installPrinter{out: stdout}
 	}
 	svc, err := app.NewForBus(bus, events)
 	if err != nil {
@@ -112,6 +120,8 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		}
 	case "config-get", "config-put":
 		return runConfig(svc, cmd, fs.Args(), *restart, stdout, stderr)
+	case "install":
+		return runInstall(svc, fs.Args(), *only, *downgrade, *yes, os.Stdin, stdout, stderr)
 	case "devices":
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

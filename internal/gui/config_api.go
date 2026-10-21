@@ -28,6 +28,7 @@ var configErrors = []struct {
 	code string
 }{
 	{app.ErrNoADB, "no-adb"},
+	{app.ErrDeviceBusy, "busy"},
 	{app.ErrNoDevice, "no-device"},
 	{app.ErrSeveralDevices, "several-devices"},
 	{app.ErrNotADB, "not-adb"},

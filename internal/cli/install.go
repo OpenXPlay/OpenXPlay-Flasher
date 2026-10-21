@@ -1,0 +1,137 @@
+// SPDX-FileCopyrightText: 2026 OpenXPlay.org
+// SPDX-License-Identifier: AGPL-3.0-only
+// Created by riko chen on 2026-10-21
+
+package cli
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
+)
+
+func runInstall(svc *app.Service, files []string, only string, downgrade, yes bool, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(files) == 0 || only != "" && only != "device" && only != "relay" {
+		fmt.Fprint(stderr, usage)
+		return 2
+	}
+	choice := only
+	if choice == "" {
+		choice = "full"
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	svc.Start(ctx)
+	defer svc.Stop()
+	for _, filename := range files {
+		if _, err := svc.InstallAdd(filename); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+	state := svc.Install(ctx)
+	var plan stage.Plan
+	for _, p := range state.Choices {
+		if p.Choice == choice {
+			plan = p
+		}
+	}
+	if state.Problem != nil {
+		fmt.Fprintln(stderr, state.Problem)
+		return 1
+	}
+	if plan.Problem != nil {
+		printPlanProblem(stderr, plan.Problem)
+		return 1
+	}
+	fmt.Fprintln(stdout, "Install plan:")
+	for i, step := range plan.Steps {
+		fmt.Fprintf(stdout, "  %d. %s: %s\n", i+1, step.Layer, step.Action)
+	}
+	if plan.Downgrade {
+		fmt.Fprintln(stdout, "Warning: this installs an older relay version.")
+		if !downgrade {
+			fmt.Fprintln(stderr, "Use -downgrade to allow this plan.")
+			return 1
+		}
+	}
+	fmt.Fprintln(stdout, "Bluetooth and the relay restart; the device layer reboots the device once. CarPlay stops for a while. Do not install while driving. Keep the USB cable connected.")
+	if !yes {
+		fmt.Fprint(stdout, "Start installation? Type y: ")
+		answer, _ := bufio.NewReader(stdin).ReadString('\n')
+		if strings.TrimSpace(answer) != "y" {
+			fmt.Fprintln(stdout, "Cancelled.")
+			return 0
+		}
+	}
+	if _, err := svc.InstallStart(ctx, stage.Request{Choice: choice, Downgrade: downgrade}); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	state, err := svc.InstallWait(ctx)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	job := state.Job
+	if job == nil {
+		fmt.Fprintln(stderr, "No install job was started.")
+		return 1
+	}
+	if job.Status != "succeeded" {
+		fmt.Fprintf(stderr, "Installation failed at step %d: %v; device state: %s\n", job.Failed+1, job.Problem, job.Left)
+		fmt.Fprint(stderr, job.Log)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Installation succeeded in %s.\n", job.Finished.Sub(job.Started).Round(time.Second))
+	for _, id := range []string{"base", "device", "relay"} {
+		fmt.Fprintf(stdout, "  %s: %s\n", id, job.Installed.Layers[id])
+	}
+	fmt.Fprintln(stdout, "Next: open the relay admin page on port 6975 (USB forwarding comes later).")
+	return 0
+}
+
+func printPlanProblem(w io.Writer, p *stage.Problem) {
+	if p.Code == "base-missing" {
+		fmt.Fprintln(w, "Install the base system first; this version cannot flash it yet.")
+		return
+	}
+	fmt.Fprintln(w, "Cannot install:", p)
+}
+
+type installPrinter struct {
+	mu   sync.Mutex
+	out  io.Writer
+	last []string
+}
+
+func (p *installPrinter) Emit(name string, data any) {
+	if name != app.EventInstall {
+		return
+	}
+	s, ok := data.(app.InstallState)
+	if !ok || s.Job == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i, step := range s.Job.Steps {
+		if i >= len(p.last) {
+			p.last = append(p.last, "")
+		}
+		if p.last[i] == step.Status || step.Status == "pending" {
+			continue
+		}
+		fmt.Fprintf(p.out, "%s: %s — %s\n", step.Layer, step.Action, step.Status)
+		p.last[i] = step.Status
+	}
+}

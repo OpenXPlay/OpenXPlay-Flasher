@@ -9,9 +9,13 @@ import { t, setLang, lang, translateStatic } from "./i18n.js";
 import { deviceView, modelView, modeLabel, otherModeLabel, usbId, usbPort } from "./devices.js";
 import { api, el } from "./ui.js";
 import * as configView from "./config.js";
+import * as installView from "./install.js";
+import * as settingsView from "./settings.js";
+import { effectiveLanguage, linksFor, viewFromHash, viewAllowed } from "./settingslogic.js";
 
-const boot = window.bootPrefs || { lang: "en", web: true };
-const state = { info: null, profiles: [], devices: null, rev: 0, offline: false, othersOpen: false, view: "install" };
+const boot = window.bootPrefs || { lang: "en", systemLang: "en", saved: "", links: {}, web: true };
+const state = { info: null, infoError: false, profiles: [], devices: null, rev: 0, offline: false, othersOpen: false,
+  view: "install", savedLang: boot.saved || "", languageBusy: false, languageError: false };
 
 function status(kind, title, text) {
   return el("div", { class: "status " + kind }, [
@@ -57,7 +61,7 @@ function renderDevices() {
       break;
     case "one":
       parts.push(status("ok", "Device found",
-        "Confirming the model and reading its installed layers over adb comes in the next version."),
+        "The model and installed layers are checked over adb before installation."),
         deviceCard(view.supported[0]));
       break;
     case "many":
@@ -86,9 +90,44 @@ function renderDevices() {
 }
 
 function renderFooter() {
+  const links = linksFor(boot.links, lang());
+  for (const link of document.querySelectorAll("[data-help]")) link.href = links[link.dataset.help];
   if (!state.info) return;
   document.getElementById("version").textContent = t("Version {v}", { v: state.info.version });
   document.getElementById("license").textContent = t("License: {l}", { l: state.info.license });
+}
+
+function renderSettings() {
+  settingsView.render({ info: state.info, infoError: state.infoError, links: boot.links,
+    savedLang: state.savedLang, languageBusy: state.languageBusy, languageError: state.languageError,
+    onLanguageChange: chooseLanguage });
+}
+
+async function loadInfo() {
+  try {
+    state.info = await api("info");
+    state.infoError = false;
+  } catch (_) {
+    state.infoError = true;
+  }
+  renderFooter();
+  renderSettings();
+}
+
+async function chooseLanguage(choice) {
+  if (state.languageBusy) return;
+  state.languageBusy = true;
+  state.languageError = false;
+  render();
+  try {
+    const saved = await api("settings", { lang: choice });
+    state.savedLang = saved.lang;
+    setLang(effectiveLanguage(saved.lang, boot.systemLang));
+  } catch (_) {
+    state.languageError = true;
+  }
+  state.languageBusy = false;
+  render();
 }
 
 function render() {
@@ -96,22 +135,35 @@ function render() {
   document.title = t("OpenXPlay Flasher");
   translateStatic(document);
   for (const b of document.querySelectorAll("[data-lang]")) {
-    b.setAttribute("aria-pressed", String(b.dataset.lang === lang()));
+    b.setAttribute("aria-pressed", String(b.dataset.lang === state.savedLang));
+    b.disabled = state.languageBusy;
   }
   renderDevices();
   renderFooter();
   configView.render();
+  installView.render();
+  renderSettings();
 }
 
 function showView(name) {
+  if (!viewAllowed(name, installView.running())) {
+    history.replaceState(null, "", "#" + state.view);
+    return;
+  }
   state.view = name;
+  history.replaceState(null, "", "#" + name);
   for (const tab of document.querySelectorAll("[data-view]")) {
     tab.setAttribute("aria-selected", String(tab.dataset.view === name));
   }
   document.getElementById("view-install").hidden = name !== "install";
   document.getElementById("view-config").hidden = name !== "config";
+  document.getElementById("view-settings").hidden = name !== "settings";
   if (name === "config") configView.refresh();
+  if (name === "install") installView.refresh();
+  if (name === "settings") loadInfo();
 }
+
+window.addEventListener("hashchange", () => showView(viewFromHash(window.location.hash)));
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -122,12 +174,15 @@ async function follow() {
     try {
       const next = await api("state?after=" + state.rev);
       const changed = next.rev !== state.rev || state.offline;
+      const devicesChanged = JSON.stringify(next.devices) !== JSON.stringify(state.devices);
       state.rev = next.rev;
       if (next.rev > 0) state.devices = next.devices;
       state.offline = false;
       if (changed) {
         renderDevices();
-        if (state.view === "config") configView.refresh();
+        if (next.install) installView.receive(next.install);
+        if (devicesChanged && state.view === "config") configView.refresh();
+        if (devicesChanged && state.view === "install") installView.refresh();
       }
     } catch (err) {
       if (!state.offline) {
@@ -172,9 +227,7 @@ document.addEventListener("click", (event) => {
   }
   const langButton = event.target.closest("[data-lang]");
   if (langButton) {
-    setLang(langButton.dataset.lang);
-    render();
-    api("settings", { lang: lang() }).catch((err) => console.error(err));
+    chooseLanguage(langButton.dataset.lang);
     return;
   }
   const link = event.target.closest("a[data-open]");
@@ -186,7 +239,12 @@ document.addEventListener("click", (event) => {
 
 setLang(boot.lang);
 configView.init(boot);
+settingsView.init();
+installView.init(boot, (running) => {
+  document.querySelectorAll("[data-view]").forEach((tab) => { tab.disabled = !viewAllowed(tab.dataset.view, running); });
+});
 render();
-api("info").then((info) => { state.info = info; renderFooter(); }).catch((err) => console.error(err));
+if (window.location.hash) showView(viewFromHash(window.location.hash));
+if (state.view !== "settings") loadInfo();
 api("profiles").then((profiles) => { state.profiles = profiles || []; renderDevices(); }).catch((err) => console.error(err));
 follow();

@@ -17,17 +17,15 @@ func appTitle(lang string) string {
 
 // siteURL is the project website in the UI language.
 func siteURL(lang string) string {
-	if lang == LangChinese {
-		return "https://openxplay.org/"
-	}
-	return "https://openxplay.org/en/"
+	return linksFor(lang).Website
 }
 
 // menuText holds the macOS menu labels in one language.
 type menuText struct {
-	About, Hide, HideOthers, ShowAll, Quit        string
-	Edit, Undo, Redo, Cut, Copy, Paste, SelectAll string
-	Window, Minimise, Zoom, Help, Website, Source string
+	About, Settings, Hide, HideOthers, ShowAll, Quit string
+	Edit, Undo, Redo, Cut, Copy, Paste, SelectAll    string
+	Window, Minimise, Zoom, Help, Website, Source    string
+	Tutorial, Download                               string
 }
 
 func menuStrings(lang string) menuText {
@@ -37,6 +35,7 @@ func menuStrings(lang string) menuText {
 			Quit: "退出 OpenXPlay 刷机工具", Edit: "编辑", Undo: "撤销", Redo: "重做", Cut: "剪切", Copy: "拷贝",
 			Paste: "粘贴", SelectAll: "全选", Window: "窗口", Minimise: "最小化", Zoom: "缩放", Help: "帮助",
 			Website: "OpenXPlay 网站", Source: "源代码",
+			Settings: "设置…", Tutorial: "使用教程", Download: "下载页面",
 		}
 	}
 	return menuText{
@@ -44,6 +43,7 @@ func menuStrings(lang string) menuText {
 		Quit: "Quit OpenXPlay Flasher", Edit: "Edit", Undo: "Undo", Redo: "Redo", Cut: "Cut", Copy: "Copy",
 		Paste: "Paste", SelectAll: "Select All", Window: "Window", Minimise: "Minimize", Zoom: "Zoom", Help: "Help",
 		Website: "OpenXPlay Website", Source: "Source Code",
+		Settings: "Settings…", Tutorial: "Tutorial", Download: "Download page",
 	}
 }
 

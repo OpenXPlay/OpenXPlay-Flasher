@@ -6,12 +6,15 @@ package app
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/version"
 )
 
 type recorder struct {
@@ -67,12 +70,28 @@ func TestServicePushesDeviceChanges(t *testing.T) {
 }
 
 func TestInfo(t *testing.T) {
+	oldVersion, oldCommit, oldDate := version.Version, version.Commit, version.BuildDate
+	version.Version, version.Commit, version.BuildDate = "1.2.3", "abc1234", "2026-10-21T10:00:00Z"
+	t.Cleanup(func() { version.Version, version.Commit, version.BuildDate = oldVersion, oldCommit, oldDate })
 	s, _ := NewForBus(usb.NewFakeBus(), &recorder{})
 	if len(s.Profiles()) == 0 {
 		t.Fatal("no builtin profiles")
 	}
 	info := s.Info()
-	if info.Name == "" || info.License != "AGPL-3.0-only" || info.SourceURL == "" {
+	if info.Name != version.Name || info.Version != version.Version || info.Commit != version.Commit ||
+		info.BuildDate != version.BuildDate || info.License != version.License || info.SourceURL != version.SourceURL ||
+		info.Platform != runtime.GOOS || info.Architecture != runtime.GOARCH {
 		t.Fatalf("incomplete info %+v", info)
+	}
+	if (runtime.GOOS == "darwin" || runtime.GOOS == "windows") && info.OSVersion == "" {
+		t.Fatal("missing host OS version")
+	}
+	version.BuildDate = ""
+	if info := s.Info(); info.BuildDate != "" || info.ADB.Mode != "" {
+		t.Fatalf("invented optional information: %+v", info)
+	}
+	s.SetADB(adb.NewConnector())
+	if info := s.Info(); info.ADB.Mode != "auto" || info.ADB.ServerAddr != adb.DefaultServerAddr || info.ADB.KeyDir == "" || info.ADB.LastTransport != "" {
+		t.Fatalf("connector info: %+v", info.ADB)
 	}
 }

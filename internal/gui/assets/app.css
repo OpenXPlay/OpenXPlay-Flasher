@@ -317,7 +317,25 @@ main { flex: 1; padding: 16px 28px; }
 .foot a { color: inherit; }
 .sep { opacity: .6; }
 
+.settings { display: grid; gap: 16px; }
+.about-info { display: grid; grid-template-columns: minmax(100px, auto) 1fr; gap: 6px 20px; margin: 0 0 14px; }
+.about-info dt { color: var(--muted); }
+.about-info dd { margin: 0; overflow-wrap: anywhere; }
+.settings a { color: var(--accent); }
+.settings .actions { align-items: center; gap: 8px 18px; }
+.settings button, .settings select { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; padding: 6px 12px; }
+.settings button { cursor: pointer; }
+.settings label { display: block; margin-bottom: 6px; }
+.settings .error-box { margin: 10px 0; }
+.data-paths { margin: 16px 0 0; }
+.data-paths code { font-size: 12px; }
+.clipboard-copy { position: fixed; top: 0; left: -9999px; }
+
 @media (max-width: 760px) {
+  .top { flex-wrap: wrap; }
+  .lang { margin-left: 54px; }
+  .about-info { grid-template-columns: 1fr; gap: 2px; }
+  .about-info dd { margin-bottom: 8px; }
   .config-body { grid-template-columns: 1fr; }
   .tabs { margin-left: 16px; margin-right: 16px; }
   .top, main { padding-left: 16px; padding-right: 16px; }
@@ -416,3 +434,33 @@ main { flex: 1; padding: 16px 28px; }
 .foot { padding-left: 16px; padding-right: 16px; }
   .steps li { padding: 8px 4px; font-size: 12px; }
 }
+
+.install { margin-top: 16px; display: flex; flex-direction: column; gap: 12px; }
+.install h2, .install h3 { margin: 0; }
+.install h3, .install legend { font-size: 14px; font-weight: 600; }
+.installed { display: grid; grid-template-columns: auto 1fr; gap: 4px 18px; margin: 0; }
+.installed dt { color: var(--muted); }
+.installed dd { margin: 0; overflow-wrap: anywhere; }
+.install-packages { display: flex; flex-direction: column; gap: 10px; }
+.package-list { list-style: none; padding: 0; margin: 0; }
+.package-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.package-list strong { overflow-wrap: anywhere; }
+.package-list code { font-size: 12px; color: var(--muted); }
+.install button { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; padding: 6px 12px; cursor: pointer; }
+.install button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button:disabled { opacity: .45; cursor: default; }
+.install input[type="text"] { min-width: 0; width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+.install-choices { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.install-choice { margin-bottom: 12px; }
+.install-choice label { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.install-choice ol { margin: 6px 0 0 28px; padding-left: 16px; color: var(--muted); }
+.install-choice p { margin-left: 28px; }
+.install-choice summary { margin-left: 28px; cursor: pointer; }
+.install-job { display: flex; flex-direction: column; gap: 10px; }
+.job-steps { padding-left: 24px; }
+.job-steps li { padding: 3px 0; }
+.job-steps span { float: right; margin-left: 12px; color: var(--muted); }
+.job-steps .running { color: var(--accent); font-weight: 600; }
+.job-steps .failed { color: var(--error); }
+#install-log summary { cursor: pointer; }
+#install-log pre { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg); padding: 12px; border-radius: 8px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }

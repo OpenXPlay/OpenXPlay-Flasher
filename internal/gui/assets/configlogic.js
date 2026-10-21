@@ -34,6 +34,7 @@ const ERROR_TEXT = {
   "bad-path": "Enter an absolute path, for example /etc/openxplay/host.json.",
   "adb-no-device": "The device does not answer over adb.",
   "adb-busy": "Another program is using the device's adb connection.",
+  "busy": "A device operation is already running. Wait for it to finish.",
 };
 
 // errorText turns an API error into a sentence in the UI language; t is the translator. Errors

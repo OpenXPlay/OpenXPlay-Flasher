@@ -49,6 +49,14 @@ func TestAutoConnector(t *testing.T) {
 			return "", err
 		}
 		defer d.Close()
+		info := c.(*AutoConnector).Info()
+		want := "usb"
+		if dev.Location() == at(0, 1, 1, 1).Location() {
+			want = "server"
+		}
+		if info.LastTransport != want {
+			t.Fatalf("connected through %s, info = %+v", want, info)
+		}
 		r, err := d.Shell(ctx, "id")
 		return string(r.Stdout), err
 	}

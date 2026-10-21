@@ -54,7 +54,7 @@ func (h *host) SetLang(lang string) {
 			w.SetTitle(appTitle(lang))
 		}
 		if runtime.GOOS == "darwin" {
-			h.app.Menu.Set(macMenu(lang, h.openInBrowser))
+			h.app.Menu.Set(macMenu(lang, h.openInBrowser, h.showSettings))
 		}
 	})
 }
@@ -83,10 +83,24 @@ func (h *host) OpenFile() (string, []byte, error) {
 	return filepath.Base(src), data, err
 }
 
+func (h *host) OpenPackages() ([]string, error) {
+	return h.app.Dialog.OpenFile().CanChooseFiles(true).
+		AddFilter("*.tar.gz, *.deb, *.json", "*.tar.gz;*.deb;*.json").PromptForMultipleSelection()
+}
+
 func (h *host) openInBrowser(url string) {
 	if err := h.OpenURL(url); err != nil {
 		log.Println("openxplay-flasher: opening", url+":", err)
 	}
+}
+
+func (h *host) showSettings() {
+	application.InvokeAsync(func() {
+		if w, ok := h.app.Window.GetByName("main"); ok {
+			w.Show().Focus()
+			w.ExecJS("window.location.hash = 'settings'")
+		}
+	})
 }
 
 // Run starts the desktop app and returns when its window is closed.
@@ -134,7 +148,7 @@ func Run() error {
 	}
 
 	if runtime.GOOS == "darwin" {
-		h.app.Menu.Set(macMenu(lang, h.openInBrowser))
+		h.app.Menu.Set(macMenu(lang, h.openInBrowser, h.showSettings))
 	}
 
 	win := h.app.Window.NewWithOptions(application.WebviewWindowOptions{

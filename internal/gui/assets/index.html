@@ -20,24 +20,24 @@ Created by riko chen on 2026-10-20
       <p class="sub" data-t="Install the OpenXPlay relay on supported devices, from scratch or one layer at a time.">Install the OpenXPlay relay on supported devices, from scratch or one layer at a time.</p>
     </div>
     <div class="lang" role="group" aria-label="Language" data-ta="Language">
-      <button type="button" data-lang="zh-CN">中文</button>
-      <button type="button" data-lang="en">English</button>
+      <button type="button" data-lang="zh-CN" data-t="中文">中文</button>
+      <button type="button" data-lang="en" data-t="English">English</button>
+      <button type="button" data-lang="" data-t="Follow the system">Follow the system</button>
     </div>
   </header>
 
   <nav class="tabs" role="tablist" aria-label="Views" data-ta="Views">
     <button type="button" role="tab" data-view="install" aria-selected="true" data-t="Install and update">Install and update</button>
     <button type="button" role="tab" data-view="config" aria-selected="false" data-t="Configuration">Configuration</button>
+    <button type="button" role="tab" data-view="settings" aria-selected="false" data-t="Settings">Settings</button>
   </nav>
 
   <div id="view-install">
-  <div class="preview" role="note" data-t="Development preview: installing and updating are not available yet; this view only detects devices.">Development preview: installing and updating are not available yet; this view only detects devices.</div>
-
   <ol class="steps" aria-label="Steps" data-ta="Steps">
     <li class="current" data-t="Connect">Connect</li>
     <li data-t="Choose">Choose</li>
     <li data-t="Prepare">Prepare</li>
-    <li data-t="Back up">Back up</li>
+    <li data-t="Back up (not needed)">Back up (not needed)</li>
     <li data-t="Flash">Flash</li>
     <li data-t="Done">Done</li>
   </ol>
@@ -47,6 +47,7 @@ Created by riko chen on 2026-10-20
       <h2 data-t="Connect your device">Connect your device</h2>
       <div id="devices" class="devices"></div>
     </section>
+    <section id="install" class="card install"></section>
   </main>
   </div>
 
@@ -54,12 +55,20 @@ Created by riko chen on 2026-10-20
     <section id="config" class="card config"></section>
   </main>
 
+  <main id="view-settings" hidden>
+    <div id="settings" class="settings"></div>
+  </main>
+
   <footer class="foot">
     <span id="version"></span>
     <span class="sep">·</span>
     <span id="license"></span>
     <span class="sep">·</span>
-    <a href="https://github.com/OpenXPlay/OpenXPlay-Flasher" data-open>Powered by OpenXPlay.</a>
+    <a data-help="source" data-open data-t="Powered by OpenXPlay.">Powered by OpenXPlay.</a>
+    <span class="sep">·</span>
+    <a data-help="tutorial" data-open data-t="Tutorial">Tutorial</a>
+    <span class="sep">·</span>
+    <a data-help="download" data-open data-t="Download">Download</a>
   </footer>
 
   <script type="module" src="/app.js"></script>

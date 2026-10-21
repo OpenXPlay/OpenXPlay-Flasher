@@ -15,8 +15,9 @@ import (
 // State is what the page renders. Rev grows with every change, so the page can long-poll for the
 // next one.
 type State struct {
-	Rev     uint64          `json:"rev"`
-	Devices device.Snapshot `json:"devices"`
+	Rev     uint64            `json:"rev"`
+	Devices device.Snapshot   `json:"devices"`
+	Install *app.InstallState `json:"install,omitempty"`
 }
 
 // Hub keeps the latest state pushed by the core and wakes the requests waiting for a change. It is
@@ -41,6 +42,12 @@ func (h *Hub) Emit(name string, data any) {
 			return
 		}
 		h.state.Devices = snap
+	case app.EventInstall:
+		state, ok := data.(app.InstallState)
+		if !ok {
+			return
+		}
+		h.state.Install = &state
 	default:
 		return
 	}
