@@ -49,6 +49,10 @@ type Service struct {
 	fileResults                  []FileResult
 	checkCancel                  context.CancelFunc
 	catalogState                 CatalogState
+	catalogFetched               bool
+	noSignatureCheck             bool
+	catalogLog                   string
+	installCatalogLog            string
 	artifacts                    map[string]stage.ArtifactNeed
 	dataDir, cacheDir, backupDir string
 	fastbootOpen                 base.OpenFastboot
@@ -84,7 +88,7 @@ type Service struct {
 
 // New returns a stopped service for the given profiles; Start begins watching for devices.
 func New(profiles []profile.Profile, detector device.Detector, events Events) *Service {
-	return &Service{profiles: profiles, detector: detector, events: events, interval: time.Second, fastbootOpen: base.NativeFastboot, fastbootSupported: usb.TransfersSupported(), designations: map[string]stockDesignation{}, nextSteps: NextSteps{Identity: "unknown"}}
+	return &Service{profiles: profiles, detector: detector, events: events, interval: time.Second, fastbootOpen: base.NativeFastboot, fastbootSupported: usb.TransfersSupported(), designations: map[string]stockDesignation{}, nextSteps: NextSteps{Identity: "unknown"}, catalogState: CatalogState{Status: "not-fetched", Channel: "beta", SignatureCheck: true}}
 }
 
 // NewForBus returns a service over a USB bus with the profiles built into the binary.
@@ -109,7 +113,7 @@ func (s *Service) Start(ctx context.Context) {
 	s.lifeCtx = ctx
 	done := make(chan struct{})
 	s.done = done
-	if s.catalogSource != nil && s.catalogState.Status == "not-fetched" {
+	if s.catalogSource != nil && !s.catalogFetched {
 		s.background.Add(1)
 		go func() {
 			defer s.background.Done()

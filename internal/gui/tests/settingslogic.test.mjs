@@ -21,7 +21,7 @@ test("About and its plain text report contain localized build and connection det
   assert.equal(aboutText(info, t), [
     "Product: OpenXPlay Flasher", "Version: 0.1.0", "Commit: abc1234", "Build date: 2026-10-21T12:00:00Z",
     "License: AGPL-3.0-only (https://github.com/OpenXPlay/OpenXPlay-Flasher)", "Platform: darwin/arm64",
-    "OS version: 26.0", "adb connection: Automatic: adb server at 127.0.0.1:5037, otherwise native USB",
+    "OS version: 26.0", "Verify the package list signature: On", "adb connection: Automatic: adb server at 127.0.0.1:5037, otherwise native USB",
     "Last adb connection: Native USB",
   ].join("\n"));
   setLang("zh-CN");

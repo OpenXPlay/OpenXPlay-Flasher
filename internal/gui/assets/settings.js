@@ -9,9 +9,11 @@ import { aboutRows, aboutText, linksFor } from "./settingslogic.js";
 let root = null;
 let current = null;
 let copyResult = "";
+let confirmSignatureOff = false;
 
 export function init() {
   root = document.getElementById("settings");
+  confirmSignatureOff = false;
 }
 
 // The clipboard API is not available in every app webview. The selection fallback also works in
@@ -77,6 +79,32 @@ export function render(prefs) {
     ]),
     prefs.languageError ? el("p", { class: "error-box", role: "alert" }, t("Could not save the language. Please try again.")) : "",
   ]);
+  const signature = el("section", { class: "card" }, [
+    el("h2", {}, t("Package list")),
+    el("label", { class: "signature-switch", for: "settings-signature" }, [
+      el("input", { type: "checkbox", role: "switch", id: "settings-signature", checked: prefs.signatureCheck !== false,
+        disabled: prefs.signatureBusy, "aria-describedby": "settings-signature-help", onchange: (event) => {
+          if (!event.target.checked && current.signatureCheck !== false) {
+            confirmSignatureOff = true; render(current);
+            document.getElementById("signature-keep")?.focus();
+          } else {
+            current.onSignatureChange(event.target.checked);
+          }
+        } }),
+      t("Verify the package list signature"),
+    ]),
+    el("p", { id: "settings-signature-help", class: "note" }, t("When off, the package list is used even if it is unsigned or its signature does not match; each chosen file is still checked against the SHA-256 in the list.")),
+    confirmSignatureOff ? el("div", { class: "confirm", role: "alertdialog", "aria-labelledby": "signature-confirm-title" }, [
+      el("p", { id: "signature-confirm-title", class: "warning" }, t("The app can then no longer tell whether the package list comes from OpenXPlay. Turn off the signature check?")),
+      el("div", { class: "actions" }, [
+        el("button", { type: "button", id: "signature-keep", onclick: () => { confirmSignatureOff = false; render(current); } }, t("Cancel")),
+        el("button", { type: "button", id: "signature-turn-off", onclick: () => {
+          confirmSignatureOff = false; current.onSignatureChange(false);
+        } }, t("Turn off")),
+      ]),
+    ]) : "",
+    prefs.signatureError ? el("p", { class: "error-box", role: "alert" }, t("Could not save the signature check setting. Please try again.")) : "",
+  ]);
   const help = el("section", { class: "card" }, [
     el("h2", {}, t("Help and downloads")),
     el("div", { class: "actions" }, [
@@ -90,6 +118,6 @@ export function render(prefs) {
       el("dt", {}, t("adb key folder")), el("dd", {}, el("code", {}, (info && info.adb && info.adb.keyDir) || t("Unknown"))),
     ]),
   ]);
-  root.replaceChildren(about, language, help);
+  root.replaceChildren(about, language, signature, help);
   if (focused) document.getElementById(focused)?.focus();
 }

@@ -59,6 +59,9 @@ Commands:
   web              serve the app's page to a browser on this computer, for UI work
 
 Flags:
+  --no-signature-check
+                   catalog, import, backup, plan, install: ignore the package list signature
+                   忽略软件包列表签名；仍校验文件 SHA-256，仍执行基础系统固定值和清单检查
   -json            devices, version, watch: print JSON instead of text
   -restart         config-put: restart the relay after writing
   -addr host:port  web: loopback address to listen on (default 127.0.0.1:0)

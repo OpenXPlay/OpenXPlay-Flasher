@@ -16,6 +16,7 @@ import { effectiveLanguage, linksFor, viewFromHash, viewAllowed } from "./settin
 
 const boot = window.bootPrefs || { lang: "en", systemLang: "en", saved: "", links: {}, web: true };
 const state = { info: null, infoError: false, profiles: [], devices: null, rev: 0, offline: false, othersOpen: false,
+  signatureCheck: boot.verifyPackageListSignature !== false, signatureBusy: false, signatureError: false,
   view: "install", savedLang: boot.saved || "", languageBusy: false, languageError: false, designation: "", designationBusy: false };
 
 function status(kind, title, text) {
@@ -128,8 +129,24 @@ function renderFooter() {
 
 function renderSettings() {
   settingsView.render({ info: state.info, infoError: state.infoError, links: boot.links,
+    signatureCheck: state.signatureCheck, signatureBusy: state.signatureBusy, signatureError: state.signatureError,
+    onSignatureChange: chooseSignatureCheck,
     savedLang: state.savedLang, languageBusy: state.languageBusy, languageError: state.languageError,
     onLanguageChange: chooseLanguage });
+}
+
+async function chooseSignatureCheck(enabled) {
+  if (state.signatureBusy) return;
+  state.signatureBusy = true; state.signatureError = false; renderSettings();
+  try {
+    const saved = await api("settings", { verifyPackageListSignature: enabled });
+    state.signatureCheck = saved.verifyPackageListSignature;
+    await loadInfo();
+    await installView.refresh();
+  } catch (_) {
+    state.signatureError = true;
+  }
+  state.signatureBusy = false; renderSettings();
 }
 
 async function loadInfo() {
@@ -208,7 +225,12 @@ async function follow() {
       if (next.rev > 0) state.devices = next.devices;
       state.offline = false;
       if (changed) {
-        if (next.install) installView.receive(next.install);
+        if (next.install) {
+          installView.receive(next.install);
+          state.signatureCheck = next.install.catalog?.signatureCheck !== false;
+          if (state.info) state.info.verifyPackageListSignature = state.signatureCheck;
+          renderSettings();
+        }
         renderDevices();
         if (devicesChanged && state.view === "config") configView.refresh();
         if (devicesChanged && state.view === "install") installView.refresh();

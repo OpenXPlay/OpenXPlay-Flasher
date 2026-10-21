@@ -46,6 +46,7 @@ export function aboutRows(info, t) {
   );
   if (info.osVersion) rows.push({ label: t("OS version"), value: info.osVersion });
   const adb = info.adb || {};
+  rows.push({ label: t("Verify the package list signature"), value: info.verifyPackageListSignature === false ? t("Off") : t("On") });
   rows.push({ label: t("adb connection"), value: adbRoute(adb, t) });
   if (adb.lastTransport === "server" || adb.lastTransport === "usb") {
     rows.push({ label: t("Last adb connection"), value: adbRoute({ ...adb, mode: adb.lastTransport }, t) });

@@ -347,6 +347,7 @@ func (s *Service) startBase(ctx context.Context, req stage.Request) (InstallStat
 		initial.Steps = append(initial.Steps, stage.StepProgress{Step: step, Status: "pending"})
 	}
 	s.installJob = &initial
+	s.installCatalogLog = "Install / 安装: " + s.signatureLogLocked()
 	s.installStale = true
 	s.mu.Unlock()
 	executor := base.NewExecutor(p, files, s.baseStore(p), base.Journals{Dir: s.dataDir})

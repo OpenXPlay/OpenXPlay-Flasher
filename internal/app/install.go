@@ -109,6 +109,11 @@ func (s *Service) installDevice(ctx context.Context) (InstallTarget, profile.Pro
 func (s *Service) installSnapshotLocked() InstallState {
 	state := InstallState{FileCheck: s.fileCheck, FileResults: slices.Clone(s.fileResults), NextSteps: s.nextSteps, Catalog: s.catalogState, Identity: s.baseIdentity, Resume: s.unfinished, Target: s.installTarget, Installed: s.installed, Packages: stage.PackageInfos(s.packages),
 		Layers: []stage.LayerRow{}, Choices: []stage.Choice{}, Problem: s.installProblem, Job: s.installJob, InstalledStale: s.installStale}
+	if state.Job != nil {
+		job := *state.Job
+		job.Log = s.catalogLog + s.installCatalogLog + job.Log
+		state.Job = &job
+	}
 	for _, key := range sortedKeys(s.artifacts) {
 		state.Artifacts = append(state.Artifacts, s.artifacts[key])
 	}
@@ -389,6 +394,7 @@ func (s *Service) startLayers(ctx context.Context, req stage.Request, retry *sta
 		initial.Steps = append(initial.Steps, stage.StepProgress{Step: step, Status: "pending"})
 	}
 	s.installJob = &initial
+	s.installCatalogLog = "Install / 安装: " + s.signatureLogLocked()
 	s.lastInstall = req
 	s.installStale = true
 	s.mu.Unlock()
@@ -542,9 +548,9 @@ func (s *Service) InstallLog() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.installJob == nil {
-		return ""
+		return s.catalogLog
 	}
-	return s.installJob.Log
+	return s.catalogLog + s.installCatalogLog + s.installJob.Log
 }
 
 func sortedKeys[V any](m map[string]V) []string { keys := mapKeys(m); slices.Sort(keys); return keys }

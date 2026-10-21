@@ -57,14 +57,20 @@ type catalogStub struct {
 	offline bool
 	err     error
 	calls   int
+	mode    catalog.Mode
 }
 
-func (s *catalogStub) Fetch(context.Context, string) (*catalog.Index, error) {
+func (s *catalogStub) Fetch(_ context.Context, _ string, mode catalog.Mode) (*catalog.Result, error) {
 	s.calls++
-	return s.index, s.err
+	s.mode = mode
+	return s.LoadCached(context.Background(), "beta", mode)
 }
-func (s *catalogStub) LoadCached(context.Context, string) (*catalog.Index, error) {
-	return s.index, s.err
+func (s *catalogStub) LoadCached(_ context.Context, _ string, mode catalog.Mode) (*catalog.Result, error) {
+	result := &catalog.Result{Index: s.index, Verified: mode == catalog.Verified}
+	if !result.Verified {
+		result.Reason = catalog.NoSignature
+	}
+	return result, s.err
 }
 func (s *catalogStub) Offline() bool { return s.offline }
 

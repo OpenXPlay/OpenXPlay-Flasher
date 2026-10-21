@@ -7,6 +7,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -19,17 +20,19 @@ import (
 )
 
 type CatalogSource interface {
-	Fetch(context.Context, string) (*catalog.Index, error)
-	LoadCached(context.Context, string) (*catalog.Index, error)
+	Fetch(context.Context, string, catalog.Mode) (*catalog.Result, error)
+	LoadCached(context.Context, string, catalog.Mode) (*catalog.Result, error)
 	Offline() bool
 }
 
 type CatalogState struct {
-	Status  string         `json:"status"` // not-fetched, fetching, fresh, cached/offline, failed
-	Channel string         `json:"channel"`
-	Index   *catalog.Index `json:"index,omitempty"`
-	Reason  string         `json:"reason,omitempty"`
-	Updated time.Time      `json:"updated,omitempty"`
+	Status         string         `json:"status"` // not-fetched, fetching, fresh, cached/offline, failed
+	Channel        string         `json:"channel"`
+	Index          *catalog.Index `json:"index,omitempty"`
+	Reason         string         `json:"reason,omitempty"`
+	SignatureCheck bool           `json:"signatureCheck"`
+	Verified       bool           `json:"verified"`
+	Updated        time.Time      `json:"updated,omitempty"`
 }
 
 // ConfigureStorage is shell wiring. Tests can supply isolated directories and HTTP clients.
@@ -42,7 +45,8 @@ func (s *Service) ConfigureStorage(dataDir, cacheDir, backupDir string, source C
 		source = catalog.NewSource(dataDir, version.Version, nil)
 	}
 	s.catalogSource = source
-	s.catalogState = CatalogState{Status: "not-fetched", Channel: "beta"}
+	s.catalogFetched = false
+	s.catalogState = CatalogState{Status: "not-fetched", Channel: "beta", SignatureCheck: !s.noSignatureCheck}
 	s.artifacts = map[string]stage.ArtifactNeed{}
 	s.picks = map[string]SelectedFile{}
 	s.checkedFiles = map[string]bool{}
@@ -80,35 +84,85 @@ func (s *Service) CatalogSnapshot() CatalogState {
 	defer s.mu.Unlock()
 	return s.catalogState
 }
+
+func (s *Service) catalogModeLocked() catalog.Mode {
+	if s.noSignatureCheck {
+		return catalog.Unverified
+	}
+	return catalog.Verified
+}
+
+// SetSignatureCheck immediately replaces the active list with this mode's cached copy. A
+// missing copy leaves no active index; the next fetch still follows the newly selected mode.
+func (s *Service) SetSignatureCheck(ctx context.Context, enabled bool) {
+	s.catalogMu.Lock()
+	defer s.catalogMu.Unlock()
+	s.mu.Lock()
+	if s.noSignatureCheck == !enabled {
+		s.mu.Unlock()
+		return
+	}
+	s.noSignatureCheck = !enabled
+	source, channel, mode := s.catalogSource, s.catalogState.Channel, s.catalogModeLocked()
+	if channel == "" {
+		channel = "beta"
+	}
+	s.catalogState = CatalogState{Status: "not-fetched", Channel: channel, SignatureCheck: enabled}
+	s.mu.Unlock()
+	if source != nil {
+		if result, err := source.LoadCached(ctx, channel, mode); err == nil {
+			s.mu.Lock()
+			s.catalogState = catalogResult(result, channel, enabled, "cached/offline", nil)
+			s.mu.Unlock()
+		}
+	}
+	s.emitInstall()
+}
+
+func catalogResult(result *catalog.Result, channel string, enabled bool, status string, err error) CatalogState {
+	state := CatalogState{Status: status, Channel: channel, SignatureCheck: enabled, Updated: time.Now().UTC()}
+	if err != nil {
+		state.Status, state.Reason = "failed", err.Error()
+	} else if result != nil {
+		state.Index, state.Verified, state.Reason = result.Index, result.Verified, result.Reason
+	}
+	return state
+}
+
+func (s *Service) signatureLogLocked() string {
+	if s.noSignatureCheck {
+		return "Package list signature check: off / 软件包列表签名校验：已关闭\n"
+	}
+	return "Package list signature check: on / 软件包列表签名校验：已开启\n"
+}
+
 func (s *Service) CatalogFetch(ctx context.Context, channel string) (CatalogState, error) {
 	s.catalogMu.Lock()
 	defer s.catalogMu.Unlock()
 	s.mu.Lock()
 	source := s.catalogSource
+	s.catalogFetched = true
+	mode, enabled := s.catalogModeLocked(), !s.noSignatureCheck
 	if channel == "" {
 		channel = s.catalogState.Channel
 	}
 	if channel == "" {
 		channel = "beta"
 	}
-	s.catalogState = CatalogState{Status: "fetching", Channel: channel}
+	s.catalogLog += fmt.Sprintf("[%s] %s", time.Now().UTC().Format(time.RFC3339), s.signatureLogLocked())
+	s.catalogState = CatalogState{Status: "fetching", Channel: channel, SignatureCheck: enabled}
 	s.mu.Unlock()
 	s.emitInstall()
 	if source == nil {
 		s.mu.Lock()
-		s.catalogState = CatalogState{Status: "failed", Channel: channel, Reason: "catalog source unavailable / 目录来源不可用"}
+		s.catalogState = catalogResult(nil, channel, enabled, "failed", &stage.Problem{Code: "catalog-unavailable", Detail: "catalog source unavailable / 软件包列表来源不可用"})
 		s.mu.Unlock()
 		s.emitInstall()
 		return s.CatalogSnapshot(), &stage.Problem{Code: "catalog-unavailable"}
 	}
-	i, err := source.Fetch(ctx, channel)
-	state := CatalogState{Status: "fresh", Channel: channel, Index: i, Updated: time.Now().UTC()}
-	if err != nil {
-		i = nil
-		state.Index = nil
-		state.Status = "failed"
-		state.Reason = err.Error()
-	} else if source.Offline() {
+	result, err := source.Fetch(ctx, channel, mode)
+	state := catalogResult(result, channel, enabled, "fresh", err)
+	if err == nil && source.Offline() {
 		state.Status = "cached/offline"
 	}
 	s.mu.Lock()
@@ -123,6 +177,8 @@ func (s *Service) CatalogShow(ctx context.Context) (CatalogState, error) {
 	defer s.catalogMu.Unlock()
 	s.mu.Lock()
 	source, channel := s.catalogSource, s.catalogState.Channel
+	s.catalogFetched = true
+	mode, enabled := s.catalogModeLocked(), !s.noSignatureCheck
 	s.mu.Unlock()
 	if source == nil {
 		return s.CatalogSnapshot(), &stage.Problem{Code: "catalog-unavailable"}
@@ -130,14 +186,8 @@ func (s *Service) CatalogShow(ctx context.Context) (CatalogState, error) {
 	if channel == "" {
 		channel = "beta"
 	}
-	i, err := source.LoadCached(ctx, channel)
-	state := CatalogState{Status: "cached/offline", Channel: channel, Index: i, Updated: time.Now().UTC()}
-	if err != nil {
-		i = nil
-		state.Index = nil
-		state.Status = "failed"
-		state.Reason = err.Error()
-	}
+	result, err := source.LoadCached(ctx, channel, mode)
+	state := catalogResult(result, channel, enabled, "cached/offline", err)
 	s.mu.Lock()
 	s.catalogState = state
 

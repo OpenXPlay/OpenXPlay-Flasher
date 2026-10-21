@@ -412,7 +412,7 @@ type guiCatalog struct {
 	client  *http.Client
 }
 
-func (c *guiCatalog) Fetch(ctx context.Context, channel string) (*catalog.Index, error) {
+func (c *guiCatalog) Fetch(ctx context.Context, channel string, mode catalog.Mode) (*catalog.Result, error) {
 	if c.client != nil {
 		for _, name := range []string{"index.json", "index.json.minisig"} {
 			req, err := http.NewRequestWithContext(ctx, "GET", "https://fixture.invalid/flasher/"+channel+"/"+name, nil)
@@ -426,10 +426,10 @@ func (c *guiCatalog) Fetch(ctx context.Context, channel string) (*catalog.Index,
 			res.Body.Close()
 		}
 	}
-	return c.index, c.err
+	return &catalog.Result{Index: c.index, Verified: true}, c.err
 }
-func (c *guiCatalog) LoadCached(context.Context, string) (*catalog.Index, error) {
-	return c.index, c.err
+func (c *guiCatalog) LoadCached(context.Context, string, catalog.Mode) (*catalog.Result, error) {
+	return &catalog.Result{Index: c.index, Verified: true}, c.err
 }
 func (c *guiCatalog) Offline() bool { return c.offline }
 

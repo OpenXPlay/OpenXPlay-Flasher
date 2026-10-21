@@ -39,7 +39,7 @@ func TestSourceStateOfflineAndRollback(t *testing.T) {
 	t.Setenv("OXP_FLASHER_CATALOG_URL", server.URL+"/{channel}/")
 	dir := t.TempDir()
 	s := NewSource(dir, "1.2.3", server.Client())
-	if got, err := s.Fetch(ctx, "beta"); err != nil || got.Sequence != 4 {
+	if got, err := s.Fetch(ctx, "beta", Verified); err != nil || got.Sequence != 4 {
 		t.Fatalf("%+v, %v", got, err)
 	}
 	// A new Source must observe the high-water mark, even with no in-memory state.
@@ -49,13 +49,13 @@ func TestSourceStateOfflineAndRollback(t *testing.T) {
 	body, sig = newBody, newSig
 	mu.Unlock()
 	s = NewSource(dir, "1.2.3", server.Client())
-	_, err := s.Fetch(ctx, "beta")
+	_, err := s.Fetch(ctx, "beta", Verified)
 	var rollback *RollbackError
 	if !errors.Is(err, ErrRollback) || !errors.As(err, &rollback) || rollback.Highest != 4 {
 		t.Fatal(err)
 	}
 	server.Close()
-	if got, err := NewSource(dir, "1.2.3", server.Client()).Fetch(ctx, "beta"); err != nil || got.Sequence != 4 {
+	if got, err := NewSource(dir, "1.2.3", server.Client()).Fetch(ctx, "beta", Verified); err != nil || got.Sequence != 4 {
 		t.Fatalf("offline: %+v, %v", got, err)
 	}
 	state, err := s.readState(ctx)
@@ -71,7 +71,7 @@ func TestSourceStateOfflineAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	var signature *SignatureError
-	if _, err := s.LoadCached(ctx, "beta"); !errors.As(err, &signature) {
+	if _, err := s.LoadCached(ctx, "beta", Verified); !errors.As(err, &signature) {
 		t.Fatalf("tampered offline index: %v", err)
 	}
 }
@@ -110,7 +110,7 @@ func TestSourceFailures(t *testing.T) {
 			if err := s.accept(context.Background(), i, body, sig, state); err != nil {
 				t.Fatal(err)
 			}
-			_, err = s.Fetch(context.Background(), "beta")
+			_, err = s.Fetch(context.Background(), "beta", Verified)
 			if tc.tooLarge {
 				if !errors.Is(err, ErrTooLarge) {
 					t.Fatal(err)
@@ -127,15 +127,15 @@ func TestSourceFailures(t *testing.T) {
 	defer server.Close()
 	s := NewSource(t.TempDir(), "test", server.Client())
 	s.BaseURLs = []string{server.URL}
-	if _, err := s.Fetch(context.Background(), "beta"); err == nil {
+	if _, err := s.Fetch(context.Background(), "beta", Verified); err == nil {
 		t.Fatal("unavailable index accepted")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := s.Fetch(ctx, "beta"); !errors.Is(err, context.Canceled) {
+	if _, err := s.Fetch(ctx, "beta", Verified); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if _, err := s.Fetch(context.Background(), "../beta"); err == nil {
+	if _, err := s.Fetch(context.Background(), "../beta", Verified); err == nil {
 		t.Fatal("invalid channel accepted")
 	}
 }
@@ -154,17 +154,17 @@ func TestSourceMirrorsChannelsAndCorruptState(t *testing.T) {
 	defer good.Close()
 	s := NewSource(t.TempDir(), "test", good.Client())
 	s.BaseURLs = []string{bad.URL, good.URL}
-	if _, err := s.Fetch(context.Background(), "beta"); err != nil {
+	if _, err := s.Fetch(context.Background(), "beta", Verified); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Fetch(context.Background(), "stable"); err == nil {
+	if _, err := s.Fetch(context.Background(), "stable", Verified); err == nil {
 		t.Fatal("wrong channel accepted")
 	}
 	for _, content := range []string{`{"channels":null}`, `{}`, `null`} {
 		if err := os.WriteFile(filepath.Join(s.root(), "state.json"), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.Fetch(context.Background(), "beta"); err == nil {
+		if _, err := s.Fetch(context.Background(), "beta", Verified); err == nil {
 			t.Fatal("corrupt state silently reset")
 		}
 	}
@@ -183,7 +183,7 @@ func TestSourceRepairsCachedPair(t *testing.T) {
 	s := NewSource(t.TempDir(), "test", server.Client())
 	s.BaseURLs = []string{server.URL}
 	ctx := context.Background()
-	if _, err := s.Fetch(ctx, "beta"); err != nil {
+	if _, err := s.Fetch(ctx, "beta", Verified); err != nil {
 		t.Fatal(err)
 	}
 	state, err := s.readState(ctx)
@@ -193,11 +193,11 @@ func TestSourceRepairsCachedPair(t *testing.T) {
 	dir := filepath.Join(s.root(), "beta", state.Channels["beta"].Digest)
 	putFile(t, filepath.Join(dir, "index.json"), []byte("damaged"))
 	putFile(t, filepath.Join(dir, "index.json.minisig"), []byte("damaged"))
-	if _, err := s.Fetch(ctx, "beta"); err != nil {
+	if _, err := s.Fetch(ctx, "beta", Verified); err != nil {
 		t.Fatal(err)
 	}
 	server.Close()
-	if _, err := s.LoadCached(ctx, "beta"); err != nil {
+	if _, err := s.LoadCached(ctx, "beta", Verified); err != nil {
 		t.Fatal(err)
 	}
 }

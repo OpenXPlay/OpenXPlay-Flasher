@@ -70,6 +70,8 @@ func ServeWeb(ctx context.Context, addr string, out io.Writer) error {
 	}
 	svc.SetADB(adb.NewConnector())
 	svc.SetSleepInhibitor(power.NewSystem())
+	settings := NewSettingsStore(dir)
+	svc.SetSignatureCheck(ctx, settings.Load().VerifyPackageListSignature)
 	svc.Start(ctx)
 	defer svc.Stop()
 
@@ -80,7 +82,7 @@ func ServeWeb(ctx context.Context, addr string, out io.Writer) error {
 	key := make([]byte, 16)
 	_, _ = rand.Read(key)
 	keyHex := hex.EncodeToString(key)
-	page := Handler(Deps{Service: svc, Hub: hub, Settings: NewSettingsStore(dir), Native: webNative{},
+	page := Handler(Deps{Service: svc, Hub: hub, Settings: settings, Native: webNative{},
 		SystemLang: systemLang(), Web: true})
 	srv := &http.Server{
 		Handler:           guardWeb(page, ln.Addr().String(), keyHex),

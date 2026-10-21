@@ -50,7 +50,7 @@ var commandService = func(hardware bool, events app.Events) (*app.Service, func(
 // standard parser. Boolean flags never consume the following positional argument.
 func interspersed(args []string) []string {
 	var flags, rest []string
-	booleans := map[string]bool{"json": true, "yes": true, "downgrade": true}
+	booleans := map[string]bool{"json": true, "yes": true, "downgrade": true, "no-signature-check": true}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -76,6 +76,10 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "print JSON / 输出 JSON")
 	channel := fs.String("channel", "beta", "catalog channel / 目录频道")
+	var noSignatureCheck bool
+	if cmd == "catalog" || cmd == "import" || cmd == "backup" || cmd == "plan" || cmd == "install" {
+		fs.BoolVar(&noSignatureCheck, "no-signature-check", false, "ignore the package list signature; keep file SHA-256 checks / 忽略软件包列表签名，仍校验文件 SHA-256")
+	}
 	serial := fs.String("serial", "", "board serial / 设备序列号")
 	basePlan := fs.String("base-plan", "", "repair: rebuild the chain during full reinstall / 完整重装时重建引导链")
 	choice := fs.String("choice", "", "stock, base, full-reinstall, repair, full, device or relay / 安装方案")
@@ -143,6 +147,7 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 	defer closeService()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	svc.SetSignatureCheck(ctx, !noSignatureCheck)
 	failure := func(err error) int {
 		if *asJSON {
 			v := map[string]any{"error": err.Error()}
@@ -485,6 +490,20 @@ func writeEngineResult(stdout, stderr io.Writer, value any, asJSON bool) int {
 		printBackups(stdout, v)
 	case app.CatalogState:
 		fmt.Fprintf(stdout, "Catalog / 目录 %s: %s\n", v.Channel, v.Status)
+		if v.Verified {
+			fmt.Fprintln(stdout, "Package list: verified / 软件包列表：已校验签名")
+		} else {
+			reason := v.Reason
+			switch reason {
+			case "signature off":
+				reason += " / 签名校验已关闭"
+			case "no signature":
+				reason += " / 没有签名"
+			case "bad signature":
+				reason += " / 签名无效"
+			}
+			fmt.Fprintf(stdout, "Package list: not verified / 软件包列表：未校验签名 (%s)\n", reason)
+		}
 		if v.Index != nil {
 			fmt.Fprintf(stdout, "Sequence / 序号: %d\n", v.Index.Sequence)
 			for id, d := range v.Index.Devices {

@@ -160,4 +160,34 @@ func TestDownloadCommandRemovedAndHelpDescribesLocalFiles(t *testing.T) {
 	if strings.Contains(out.String(), "download --layer") || !strings.Contains(out.String(), "Packages are never downloaded") || !strings.Contains(out.String(), "不复制文件") {
 		t.Fatal("help still describes downloads")
 	}
+	if !strings.Contains(out.String(), "--no-signature-check") || !strings.Contains(out.String(), "软件包列表签名") {
+		t.Fatal("signature flag is missing from help")
+	}
+}
+
+func TestCLISignatureFlagIsPerCommand(t *testing.T) {
+	for _, cmd := range []string{"catalog", "import", "backup", "plan", "install"} {
+		t.Run(cmd, func(t *testing.T) {
+			svc, _, file := engineFixture(t)
+			args := map[string][]string{
+				"catalog": {"fetch"}, "import": {file}, "backup": {"list"},
+				"plan": {"--choice", "relay", file}, "install": {"--only", "relay", "--yes", file},
+			}[cmd]
+			args = append(args, "--no-signature-check")
+			var out, errOut bytes.Buffer
+			code := runEngineCLI(cmd, args, strings.NewReader(""), &out, &errOut)
+			if code == 2 || svc.Info().SignatureCheck {
+				t.Fatalf("flag was not applied: %d %s", code, errOut.String())
+			}
+			if cmd == "install" && (code != 0 || !strings.Contains(svc.InstallLog(), "signature check: off")) {
+				t.Fatalf("install did not record off mode: %d %s", code, errOut.String())
+			}
+			out.Reset()
+			errOut.Reset()
+			runEngineCLI("catalog", []string{"show"}, nil, &out, &errOut)
+			if !svc.Info().SignatureCheck {
+				t.Fatal("flag persisted into the next command")
+			}
+		})
+	}
 }

@@ -18,7 +18,28 @@ import (
 	"sync"
 )
 
-// Source fetches and remembers verified catalogs. BaseURLs are channel directories; {channel}
+// Mode is supplied explicitly by the application, never by an environment override.
+type Mode uint8
+
+const (
+	Verified Mode = iota
+	Unverified
+)
+
+const (
+	SignatureOff = "signature off"
+	NoSignature  = "no signature"
+	BadSignature = "bad signature"
+)
+
+// Result keeps local trust metadata separate from the publisher's index.
+type Result struct {
+	*Index
+	Verified bool
+	Reason   string
+}
+
+// Source fetches and remembers catalogs. BaseURLs are channel directories; {channel}
 // is expanded when present. An environment override is a complete channel directory too.
 // Use one Source per data directory; operations on that Source are serialized.
 type Source struct {
@@ -85,9 +106,9 @@ func checkSequence(i *Index, channel string, state sourceState) error {
 	return nil
 }
 
-// Fetch tries each mirror, then the last verified copy if all mirrors are unavailable. Invalid
-// signatures, formats, oversized responses and rollbacks are returned, not hidden by fallback.
-func (s *Source) Fetch(ctx context.Context, channel string) (*Index, error) {
+// Fetch tries each mirror, then this mode's cached copy if all mirrors are unavailable. Verified
+// mode returns invalid signatures, formats, oversized responses and rollbacks without fallback.
+func (s *Source) Fetch(ctx context.Context, channel string, mode Mode) (*Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -95,6 +116,12 @@ func (s *Source) Fetch(ctx context.Context, channel string) (*Index, error) {
 	}
 	if !validID(channel) {
 		return nil, &InvalidError{"channel", "invalid channel name"}
+	}
+	if mode == Unverified {
+		return s.fetchUnverified(ctx, channel)
+	}
+	if mode != Verified {
+		return nil, &InvalidError{"mode", "unknown signature mode"}
 	}
 	state, err := s.readState(ctx)
 	if err != nil {
@@ -129,28 +156,149 @@ func (s *Source) Fetch(ctx context.Context, channel string) (*Index, error) {
 			return nil, err
 		}
 		s.offline = false
-		return i, nil
+		return &Result{Index: i, Verified: true}, nil
 	}
 	i, err := s.loadCached(ctx, channel, state)
 	if err == nil {
 		s.offline = true
-		return i, nil
+		return &Result{Index: i, Verified: true}, nil
 	}
 	return nil, errors.Join(append(failures, err)...)
 }
 
-// LoadCached re-verifies both files and enforces the persisted sequence without network access.
-func (s *Source) LoadCached(ctx context.Context, channel string) (*Index, error) {
+// LoadCached uses only this mode's cache. Verified mode re-verifies both files and enforces the
+// persisted sequence; Unverified mode strictly decodes its separate copy and reports trust.
+func (s *Source) LoadCached(ctx context.Context, channel string, mode Mode) (*Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !validID(channel) {
 		return nil, &InvalidError{"channel", "invalid channel name"}
 	}
+	if mode == Unverified {
+		return s.loadUnverified(ctx, channel)
+	}
+	if mode != Verified {
+		return nil, &InvalidError{"mode", "unknown signature mode"}
+	}
 	state, err := s.readState(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return s.loadCached(ctx, channel, state)
+	i, err := s.loadCached(ctx, channel, state)
+	if err != nil {
+		return nil, err
+	}
+	return &Result{Index: i, Verified: true}, nil
+}
+
+// One atomic envelope preserves the optional signature and its exact index bytes together.
+// This mode never reads or writes the verified high-water mark or cache.
+type unverifiedCopy struct {
+	Index     []byte `json:"index"`
+	Signature []byte `json:"signature,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+func (s *Source) unverifiedPath(channel string) string {
+	return filepath.Join(s.root(), "unverified", channel+".json")
+}
+
+func (c unverifiedCopy) decode(channel string) (*Result, error) {
+	i, err := Decode(c.Index)
+	if err != nil {
+		return nil, err
+	}
+	if i.Channel != channel {
+		return nil, &InvalidError{"channel", "catalog does not belong to the requested channel"}
+	}
+	result := &Result{Index: i, Reason: c.Reason}
+	if c.Signature != nil {
+		if _, err := VerifyIndex(c.Index, c.Signature); err == nil {
+			result.Verified, result.Reason = true, ""
+		} else {
+			result.Reason = BadSignature
+		}
+	} else if result.Reason != SignatureOff && result.Reason != BadSignature {
+		result.Reason = NoSignature
+	}
+	return result, nil
+}
+
+func (s *Source) fetchUnverified(ctx context.Context, channel string) (*Result, error) {
+	var failures []error
+	for _, base := range s.BaseURLs {
+		base = strings.TrimRight(strings.ReplaceAll(base, "{channel}", channel), "/") + "/"
+		data, err := get(ctx, s.Client, base+"index.json", "OpenXPlay-Flasher/"+s.Version, MaxIndexSize)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if errors.Is(err, ErrTooLarge) {
+				return nil, err
+			}
+			failures = append(failures, err)
+			continue
+		}
+		// Reject malformed indexes even when the optional signature cannot be obtained.
+		copy := unverifiedCopy{Index: data, Reason: NoSignature}
+		if _, err := copy.decode(channel); err != nil {
+			return nil, err
+		}
+		copy.Signature, err = get(ctx, s.Client, base+"index.json.minisig", "OpenXPlay-Flasher/"+s.Version, MaxSignatureSize)
+		if err == nil && len(copy.Signature) == 0 {
+			copy.Reason = BadSignature
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if err != nil {
+			copy.Signature = nil
+			var status *HTTPError
+			switch {
+			case errors.Is(err, ErrTooLarge):
+				copy.Reason = BadSignature
+			case errors.As(err, &status) && status.Status == http.StatusNotFound:
+				copy.Reason = NoSignature
+			default:
+				copy.Reason = SignatureOff
+			}
+		}
+		result, err := copy.decode(channel)
+		if err != nil {
+			return nil, err
+		}
+		cached, err := json.Marshal(copy)
+		if err != nil {
+			return nil, err
+		}
+		path := s.unverifiedPath(channel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return nil, err
+		}
+		if err := WriteFile(ctx, path, cached, 0o600); err != nil {
+			return nil, err
+		}
+		s.offline = false
+		return result, nil
+	}
+	result, err := s.loadUnverified(ctx, channel)
+	if err == nil {
+		s.offline = true
+		return result, nil
+	}
+	return nil, errors.Join(append(failures, err)...)
+}
+
+func (s *Source) loadUnverified(ctx context.Context, channel string) (*Result, error) {
+	data, err := ReadFile(ctx, s.unverifiedPath(channel), 2*(MaxIndexSize+MaxSignatureSize))
+	if err != nil {
+		return nil, err
+	}
+	var copy unverifiedCopy
+	if err := DecodeStrict(data, &copy); err != nil {
+		return nil, err
+	}
+	return copy.decode(channel)
 }
 
 func (s *Source) loadCached(ctx context.Context, channel string, state sourceState) (*Index, error) {

@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
@@ -81,17 +82,21 @@ var contentTypes = map[string]string{
 
 // Handler serves the page and the API.
 func Handler(d Deps) http.Handler {
+	d.Service.SetSignatureCheck(context.Background(), d.Settings.Load().VerifyPackageListSignature)
+	var settingsMu sync.Mutex
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /boot.js", func(w http.ResponseWriter, r *http.Request) {
-		saved := d.Settings.Load().Lang
+		settings := d.Settings.Load()
+		saved := settings.Lang
 		prefs, _ := json.Marshal(map[string]any{
-			"lang":       UILang(saved, d.SystemLang),
-			"saved":      saved,
-			"systemLang": UILang("", d.SystemLang),
-			"links":      helpLinks,
-			"platform":   runtime.GOOS,
-			"web":        d.Web,
+			"lang":                       UILang(saved, d.SystemLang),
+			"saved":                      saved,
+			"systemLang":                 UILang("", d.SystemLang),
+			"links":                      helpLinks,
+			"platform":                   runtime.GOOS,
+			"web":                        d.Web,
+			"verifyPackageListSignature": settings.VerifyPackageListSignature,
 		})
 		w.Header().Set("Content-Type", contentTypes[".js"])
 		w.Header().Set("Cache-Control", "no-store")
@@ -128,7 +133,11 @@ func Handler(d Deps) http.Handler {
 	})
 
 	mux.HandleFunc("POST /api/settings", func(w http.ResponseWriter, r *http.Request) {
-		var in Settings
+		// Merge preference changes as one operation, so changing language cannot undo a
+		// simultaneous signature switch in another window.
+		settingsMu.Lock()
+		defer settingsMu.Unlock()
+		in := d.Settings.Load()
 		if !readJSON(w, r, &in) {
 			return
 		}
@@ -140,6 +149,7 @@ func Handler(d Deps) http.Handler {
 			writeError(w, http.StatusInternalServerError, "settings_write", err.Error())
 			return
 		}
+		d.Service.SetSignatureCheck(r.Context(), in.VerifyPackageListSignature)
 		d.Native.SetLang(UILang(in.Lang, d.SystemLang))
 		writeJSON(w, http.StatusOK, in)
 	})

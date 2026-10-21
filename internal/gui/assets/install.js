@@ -320,10 +320,14 @@ async function refreshCatalog() {
 }
 function catalogView() {
   const c = view.state?.catalog;
-  const text = c?.status === "fresh" ? t("Package list: fresh ({channel}, #{n})", { channel: c.channel, n: c.index?.sequence || 0 }) :
+  const unverified = c?.verified === false && !!c.index;
+  const reason = c?.reason === "no signature" ? t("No signature") : c?.reason === "bad signature" ? t("Bad signature") : t("Signature check is off");
+  const text = unverified ? t("Package list: not verified ({reason})", { reason }) +
+    (c.status === "cached/offline" ? " · " + t("Saved copy (offline)") : "") :
+    c?.status === "fresh" ? t("Package list: fresh ({channel}, #{n})", { channel: c.channel, n: c.index?.sequence || 0 }) :
     c?.status === "cached/offline" ? t("Package list: saved copy (offline), from {date}", { date: dateText(c.index?.generated || c.updated) }) :
       c?.status === "fetching" ? t("Loading the package list…") : t("Package list unavailable. Base files use the profile pins; other packages use their manifests.");
-  return el("div", { class: "catalog-status" }, [el("p", { class: c?.status === "fresh" ? "check ok" : "warning", role: "status" }, text),
+  return el("div", { class: "catalog-status" }, [el("p", { class: c?.status === "fresh" && !unverified ? "check ok" : "warning", role: "status" }, text),
     el("button", { type: "button", disabled: view.busy || view.preparing || c?.status === "fetching", onclick: refreshCatalog }, t("Refresh"))]);
 }
 
@@ -590,6 +594,9 @@ export function render() {
   const atEnd = !log || log.scrollHeight - log.scrollTop - log.clientHeight < 20;
   const step = phase(view.state, view.step);
   const banner = document.getElementById("install-running-warning");
+  const signatureNotice = document.getElementById("signature-off-notice");
+  signatureNotice.hidden = (view.state?.catalog?.signatureCheck ?? view.boot.verifyPackageListSignature) !== false;
+  signatureNotice.textContent = t("Signature check is off: the package list is not verified");
   banner.hidden = !running();
   banner.textContent = t(WARNING_TEXT.running);
   banner.classList.toggle("critical", !!view.state?.job?.steps?.some((s) => s.status === "running" && s.critical));

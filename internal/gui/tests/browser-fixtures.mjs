@@ -43,7 +43,7 @@ export function fixture(scene) {
   const state = { target: { profile: "ufi003", device: candidate(mode) }, identity: { mode, serial, product: mode === "fastboot" ? "lk1st" : "", location: "1-3.2" },
     installed: structuredClone(facts), installedStale: false, packages: [], layers: [], choices: [], suggested: mode === "stock" ? "stock" : mode === "fastboot" ? "repair" : "relay",
     nextSteps: { serial, identity: "absent", forward: { active: false } },
-    catalog: { status: "fresh", channel: "beta", index: { sequence: 12, generated: "2026-10-21T08:00:00Z" } },
+    catalog: { status: "fresh", channel: "beta", signatureCheck: true, verified: true, index: { sequence: 12, generated: "2026-10-21T08:00:00Z" } },
   };
   const need = (layer) => {
     let list = layer === "base" ? ["base-generic", "rootfs-zip", "boot"].map((role) => {
@@ -70,6 +70,7 @@ export function fixture(scene) {
   else if (mode !== "fastboot") state.choices = state.choices.filter((c) => c.id !== "repair");
   if (scene === "prepare-no-catalog") state.catalog = { status:"failed", channel:"beta" };
   if (scene === "prepare-saved") state.catalog.status = "cached/offline";
+  if (scene === "signature-off") Object.assign(state.catalog, { signatureCheck: false, verified: false, reason: "no signature" });
   if (scene === "prepare-unmatched") state.fileResults = [{name:"other-file.zip",size:8388608,sha256:hash,problem:{code:"unmatched-file",detail:"other-file.zip · 8388608 B · SHA-256 "+hash.slice(0,12)}}];
   state.layers = ["base", "device", "relay"].map((layer) => ({ layer, ...(layer === "base" ? {kernelRelease:pinnedBase.linux.kernelRelease} : {}), name: names[layer], installed: state.installed.layers[layer], action: "update", enabled: true,
     choice: layer === "base" && mode === "stock" ? "stock" : layer, ...(layer === "base" ? { actionName: state.choices.find((c) => c.id === (mode === "stock" ? "stock" : "base"))?.name } : {}) }));
@@ -109,24 +110,39 @@ const server = createServer(async (req, res) => {
     res.setHeader("Set-Cookie", ["scene="+scene+"; SameSite=Strict", "language="+language+"; SameSite=Strict"]);
   }
   const data = sessions.get(scene+language) || fixture(scene);
+  sessions.set(scene+language, data);
+  data.settings ||= { lang: language, verifyPackageListSignature: data.state.catalog.signatureCheck !== false };
   const json = (value, status = 200) => { res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(value)); };
   if (url.pathname === "/boot.js") {
     const links = Object.fromEntries(["en", "zh-CN"].map((l) => [l, { manual: "https://openxplay.org/"+(l === "en" ? "en/" : "")+"ufi003-flash", tutorial: "https://openxplay.org/ufi003-relay#flasher", download:"https://openxplay.org/ufi003-relay#flasher-download", source: "https://github.com/OpenXPlay/OpenXPlay-Flasher" }]));
-    res.setHeader("Content-Type", "text/javascript"); res.end("window.bootPrefs="+JSON.stringify({ lang: language, systemLang: language, saved: language, web: true, platform: "darwin", links })+";"); return;
+    res.setHeader("Content-Type", "text/javascript"); res.end("window.bootPrefs="+JSON.stringify({ lang: language, systemLang: language, saved: language, verifyPackageListSignature: data.settings.verifyPackageListSignature, web: true, platform: "darwin", links })+";"); return;
   }
   if (url.pathname === "/api/state") {
     if (Number(url.searchParams.get("after")) >= (data.rev || 1)) await new Promise((resolve) => setTimeout(resolve, 1200));
     json({ rev: data.rev || 1, devices: data.devices, install: data.state }); return;
   }
   if (url.pathname === "/api/profiles") { json([{ id: "ufi003", name: text("UFI003 4G USB dongle", "UFI003 随身 Wi-Fi"), layers: Object.entries(names).map(([id,name]) => ({id,name,destructive:id === "base"})) }]); return; }
-  if (url.pathname === "/api/info") { json({ version: "vx0w.9-fixture", license: "AGPL-3.0-only" }); return; }
+  if (url.pathname === "/api/info") {
+    json({ name: "OpenXPlay Flasher", version: "vx0w.10-fixture", commit: "bfa5550+changes", license: "AGPL-3.0-only", sourceUrl: "https://github.com/OpenXPlay/OpenXPlay-Flasher",
+      platform: "darwin", architecture: "arm64", settingsFile: "/Users/owner/Library/Application Support/OpenXPlay Flasher/settings.json",
+      adb: { mode: "auto", serverAddr: "127.0.0.1:5037", keyDir: "/Users/owner/.android" }, verifyPackageListSignature: data.settings.verifyPackageListSignature }); return;
+  }
   if (url.pathname.startsWith("/api/backups/")) { json(data.backups); return; }
   if (url.pathname === "/api/devices/designate-stock") {
     const next = fixture("connect-stock"); Object.assign(data, next, { rev: 2 }); sessions.set(scene+language, data); json(next.state); return;
   }
   if (url.pathname === "/api/install" || url.pathname === "/api/install/prepare") { json(data.state); return; }
   if (url.pathname === "/api/open") { res.writeHead(204); res.end(); return; }
-  if (url.pathname === "/api/settings") { json({ lang: language }); return; }
+  if (url.pathname === "/api/settings") {
+    if (req.method === "POST") {
+      let body = ""; for await (const part of req) body += part;
+      Object.assign(data.settings, JSON.parse(body));
+      const enabled = data.settings.verifyPackageListSignature;
+      Object.assign(data.state.catalog, { signatureCheck: enabled, verified: enabled, reason: enabled ? undefined : "no signature" });
+      data.rev = (data.rev || 1) + 1;
+    }
+    json(data.settings); return;
+  }
   if (url.pathname.startsWith("/api/")) { json({ code: "fixture", error: "Fixture-only API" }, 409); return; }
   const name = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
   if (!/^[a-z][a-z0-9.-]*$/.test(name)) { res.writeHead(404); res.end(); return; }

@@ -8,44 +8,14 @@ import { setLang, t } from "../assets/i18n.js";
 import { WARNING_TEXT } from "../assets/installlogic.js";
 
 // A small DOM fake exercises the actual view without a browser dependency or a device service.
-class NodeFake {
-  constructor(tag = "", text = "") {
-    this.tag = tag; this.children = []; this.attributes = {}; this.listeners = {};
-    this.className = ""; this.id = ""; this.dataset = {}; this.hidden = false; this.disabled = false; this.open = false; this.text = text;
-    this.classList = { toggle: (name, enabled) => {
-      const classes = new Set(this.className.split(" ").filter(Boolean));
-      if (enabled) classes.add(name); else classes.delete(name);
-      this.className = [...classes].join(" ");
-    } };
-  }
-  setAttribute(key, value) {
-    this.attributes[key] = value;
-    if (["disabled", "checked", "open", "hidden"].includes(key)) this[key] = true;
-    else this[key] = value;
-    if (key.startsWith("data-")) this.dataset[key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
-  }
-  removeAttribute(key) { delete this.attributes[key]; }
-  addEventListener(event, fn) { (this.listeners[event] ||= []).push(fn); }
-  append(node) { if (!(node instanceof NodeFake)) node = new NodeFake("", String(node)); node.parent = this; this.children.push(node); }
-  replaceChildren(...nodes) { this.children = []; for (const node of nodes) this.append(node); }
-  contains(node) { return this === node || this.children.some((c) => c.contains(node)); }
-  get textContent() { return this.text + this.children.map((c) => c.textContent).join(""); }
-  set textContent(text) { this.text = text; this.children = []; }
-  focus() { document.activeElement = this; }
-  scrollIntoView() {}
-  setSelectionRange() {}
-  async click() {
-    assert.equal(this.disabled, false, "clicked a disabled control: " + this.textContent);
-    for (const fn of this.listeners.click || []) await fn({ target: this });
-  }
-}
-const walk = (node) => [node, ...node.children.flatMap(walk)];
+import { NodeFake, walk } from "./dom-fixture.mjs";
 
 function dom() {
   globalThis.Node = NodeFake;
   const body = new NodeFake("body");
   const add = (parent, tag, id) => { const node = new NodeFake(tag); node.id = id; parent.append(node); return node; };
   add(body, "div", "install-running-warning").hidden = true;
+  add(body, "div", "signature-off-notice").hidden = true;
   add(body, "section", "install-connect");
   const steps = add(body, "ol", "steps"); steps.className = "steps";
   for (let i = 0; i < 6; i++) {
@@ -255,3 +225,34 @@ for (const language of ["en", "zh-CN"]) test("Prepare links, multiple paths, unm
 function problemTextForTest(code,detail) {
   return t("This file is not one of the files listed here: {detail}.",{detail});
 }
+
+for (const language of ["en", "zh-CN"]) test("signature notice persists through steps and Prepare explains trust in " + language, async () => {
+  const d = dom(); setLang(language);
+  const savedInterval = globalThis.setInterval; globalThis.setInterval = () => 0;
+  const page = await import("../assets/install.js?signature-" + language);
+  page.init(boot); globalThis.setInterval = savedInterval;
+  const s = snapshot();
+  s.catalog = { status: "fresh", signatureCheck: false, verified: false, reason: "no signature", index: { sequence: 2 } };
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => s });
+  page.receive(s);
+  const notice = d.get("signature-off-notice");
+  assert.equal(notice.hidden, false);
+  assert.ok(notice.className !== "error-box");
+  assert.equal(notice.textContent, t("Signature check is off: the package list is not verified"));
+  await d.get("nav-1").click();
+  assert.equal(notice.hidden, false);
+  await d.get("install-continue").click();
+  for (const [reason, label] of [["no signature", "No signature"], ["bad signature", "Bad signature"], ["signature off", "Signature check is off"]]) {
+    s.catalog.reason = reason; page.receive(s);
+    assert.ok(d.root.textContent.includes(t("Package list: not verified ({reason})", { reason: t(label) })));
+    const line = d.nodes().find((n) => n.attributes.role === "status" && n.textContent.includes(t(label)));
+    assert.ok(line.className.includes("warning"));
+  }
+  s.catalog.status = "cached/offline"; page.receive(s);
+  assert.ok(d.root.textContent.includes(t("Saved copy (offline)")));
+  s.catalog.verified = true; s.catalog.status = "fresh"; page.receive(s);
+  assert.equal(notice.hidden, false, "off mode stays visible even when this signature is valid");
+  assert.ok(!d.root.textContent.includes(t("Package list: not verified ({reason})", { reason: t("Signature check is off") })));
+  s.catalog.signatureCheck = true; page.receive(s);
+  assert.equal(notice.hidden, true);
+});

@@ -6,6 +6,20 @@
 // Placeholders are written {name} and filled from t()'s second argument.
 
 export const ZH = {
+  "Verify the package list signature": "校验软件包列表签名",
+  "When off, the package list is used even if it is unsigned or its signature does not match; each chosen file is still checked against the SHA-256 in the list.": "关闭后，即使软件包列表没有签名或签名不匹配，也会使用该列表；所选文件仍会按列表中的 SHA-256 进行校验。",
+  "The app can then no longer tell whether the package list comes from OpenXPlay. Turn off the signature check?": "关闭后，工具将无法确认软件包列表是否来自 OpenXPlay。确定要关闭签名校验吗？",
+  "Turn off": "关闭校验",
+  "Could not save the signature check setting. Please try again.": "无法保存签名校验设置，请重试。",
+  "Package list": "软件包列表",
+  "On": "已开启",
+  "Off": "已关闭",
+  "Signature check is off: the package list is not verified": "签名校验已关闭：软件包列表未经签名校验",
+  "Package list: not verified ({reason})": "软件包列表：未经签名校验（{reason}）",
+  "No signature": "没有签名",
+  "Bad signature": "签名无效",
+  "Signature check is off": "签名校验已关闭",
+  "Saved copy (offline)": "已保存的副本（离线）",
   "Refresh": "刷新",
   "Could not read this file: {detail}. Choose a regular file within the size limit.": "无法读取此文件：{detail}。请选择大小未超过限制的普通文件。",
   "This file changed after it was selected: {detail}. Choose it again before continuing.": "此文件在选择后发生了变化：{detail}。请重新选择文件后再继续。",

@@ -13,16 +13,17 @@ import (
 
 // Info identifies the build and host, for the about view and diagnostics.
 type Info struct {
-	Name         string             `json:"name"`
-	Version      string             `json:"version"`
-	Commit       string             `json:"commit"`
-	BuildDate    string             `json:"buildDate,omitempty"`
-	License      string             `json:"license"`
-	SourceURL    string             `json:"sourceUrl"`
-	Platform     string             `json:"platform"`
-	Architecture string             `json:"architecture"`
-	OSVersion    string             `json:"osVersion,omitempty"`
-	ADB          adb.ConnectionInfo `json:"adb"`
+	Name           string             `json:"name"`
+	Version        string             `json:"version"`
+	Commit         string             `json:"commit"`
+	BuildDate      string             `json:"buildDate,omitempty"`
+	License        string             `json:"license"`
+	SourceURL      string             `json:"sourceUrl"`
+	Platform       string             `json:"platform"`
+	Architecture   string             `json:"architecture"`
+	OSVersion      string             `json:"osVersion,omitempty"`
+	ADB            adb.ConnectionInfo `json:"adb"`
+	SignatureCheck bool               `json:"verifyPackageListSignature"`
 	// SettingsFile is supplied by the GUI shell, which owns the settings store.
 	SettingsFile string `json:"settingsFile,omitempty"`
 }
@@ -31,11 +32,13 @@ type Info struct {
 func (s *Service) Info() Info {
 	s.mu.Lock()
 	connector := s.adb
+	signatureCheck := !s.noSignatureCheck
 	s.mu.Unlock()
 	info := Info{
 		Name: version.Name, Version: version.Version, Commit: version.Commit,
 		BuildDate: version.BuildDate, License: version.License, SourceURL: version.SourceURL,
 		Platform: runtime.GOOS, Architecture: runtime.GOARCH, OSVersion: osVersion(),
+		SignatureCheck: signatureCheck,
 	}
 	if c, ok := connector.(interface{ Info() adb.ConnectionInfo }); ok {
 		info.ADB = c.Info()

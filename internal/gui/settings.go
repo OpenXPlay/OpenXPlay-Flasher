@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: AGPL-3.0-only
-// Created by riko chen on 2026-10-20
+// Created by riko chen on 2026-10-21
 
 package gui
 
@@ -21,8 +21,11 @@ const (
 // Settings are the user's GUI preferences, kept in settings.json in the app's config folder.
 type Settings struct {
 	// Lang is "" to follow the system, or one of the shipped languages.
-	Lang string `json:"lang"`
+	Lang                       string `json:"lang"`
+	VerifyPackageListSignature bool   `json:"verifyPackageListSignature"`
 }
+
+func defaultSettings() Settings { return Settings{VerifyPackageListSignature: true} }
 
 // SettingsStore reads and writes Settings in one file.
 type SettingsStore struct {
@@ -48,13 +51,13 @@ func NewSettingsStore(dir string) *SettingsStore {
 func (s *SettingsStore) Load() Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out Settings
+	out := defaultSettings()
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		return out
 	}
 	if json.Unmarshal(data, &out) != nil {
-		return Settings{}
+		return defaultSettings()
 	}
 	out.Lang = NormalizeLang(out.Lang)
 	return out
