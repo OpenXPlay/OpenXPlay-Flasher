@@ -15,7 +15,12 @@ const defaultMaxPiece = int64(200 << 20)
 
 // FlashOptions bounds the bytes in each download, including sparse headers. Zero uses the smaller
 // of 200 MiB and max-download-size. A positive override is still capped at the device/protocol limit.
-type FlashOptions struct{ MaxPiece int64 }
+type FlashOptions struct {
+	MaxPiece int64
+	// BeforeWrite runs before each download and flash, including every sparse piece. It may
+	// inspect discovery state, but must not call this client (Flash owns the protocol lock).
+	BeforeWrite func(context.Context) error
+}
 
 // Flash checks capacity, then downloads and writes each piece in order. Small raw files retain
 // their exact bytes; sparse files and large raw files use complete sparse images with holes around
@@ -64,6 +69,11 @@ func (c *Client) Flash(ctx context.Context, partition string, img *Image, opts F
 	}
 	count := max(1, len(pieces))
 	for i := range count {
+		if opts.BeforeWrite != nil {
+			if err := opts.BeforeWrite(ctx); err != nil {
+				return err
+			}
+		}
 		size := img.Size()
 		var r io.Reader = io.NewSectionReader(img.source, 0, size)
 		if len(pieces) > 0 {
@@ -72,6 +82,11 @@ func (c *Client) Flash(ctx context.Context, partition string, img *Image, opts F
 		}
 		if _, err := c.download(ctx, r, size, p, i+1, count); err != nil {
 			return err
+		}
+		if opts.BeforeWrite != nil {
+			if err := opts.BeforeWrite(ctx); err != nil {
+				return err
+			}
 		}
 		progress(p, "writing", i+1, count, 0, size, nil)
 		rsp, err := c.command(ctx, cmd, flashTimeout)

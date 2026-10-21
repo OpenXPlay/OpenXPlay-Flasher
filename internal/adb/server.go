@@ -61,7 +61,9 @@ func (s ServerConnector) Connect(ctx context.Context, dev usb.DeviceInfo) (Devic
 	if err != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	return newDevice(t, splitList(list)), nil
+	d := newDevice(t, splitList(list))
+	d.serial = e.serial
+	return d, nil
 }
 
 type serverEntry struct {
@@ -270,3 +272,28 @@ func (t *serverTransport) open(ctx context.Context, name string) (service, error
 }
 
 func (t *serverTransport) close() error { return nil }
+
+// LocateSerial resolves an explicitly designated serial using the host inventory only. No
+// device service is opened, and duplicate serials cannot select a device on the user's behalf.
+func (s ServerConnector) LocateSerial(ctx context.Context, serial string, devices []usb.DeviceInfo) (usb.DeviceInfo, error) {
+	entries, err := s.devices(ctx)
+	if err != nil {
+		return usb.DeviceInfo{}, err
+	}
+	if countSerial(entries, serial) != 1 {
+		return usb.DeviceInfo{}, ErrNoDevice
+	}
+	for _, e := range entries {
+		if e.serial == serial {
+			for _, dev := range devices {
+				if e.usb == dev.Location() || e.usb == "" && dev.Serial == serial {
+					return dev, nil
+				}
+			}
+		}
+	}
+	return usb.DeviceInfo{}, ErrNoDevice
+}
+func (a *AutoConnector) LocateSerial(ctx context.Context, serial string, devices []usb.DeviceInfo) (usb.DeviceInfo, error) {
+	return a.Server.LocateSerial(ctx, serial, devices)
+}

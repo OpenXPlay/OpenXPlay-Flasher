@@ -90,6 +90,19 @@ func installRoutes(mux *http.ServeMux, d Deps) {
 		}
 		writeJSON(w, http.StatusOK, state)
 	})
+	mux.HandleFunc("POST /api/install/plan", func(w http.ResponseWriter, r *http.Request) {
+		var in stage.Request
+		if !readJSON(w, r, &in) {
+			return
+		}
+		choice, err := d.Service.InstallPlan(in)
+		if err != nil {
+			writeInstallError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, choice)
+	})
+
 	mux.HandleFunc("POST /api/install/start", func(w http.ResponseWriter, r *http.Request) {
 		var in stage.Request
 		if !readJSON(w, r, &in) {
@@ -104,6 +117,64 @@ func installRoutes(mux *http.ServeMux, d Deps) {
 		}
 		writeJSON(w, http.StatusAccepted, state)
 	})
+	mux.HandleFunc("POST /api/install/prepare", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Choice string `json:"choice"`
+		}
+		if !readJSON(w, r, &in) {
+			return
+		}
+		state, err := d.Service.InstallPrepare(r.Context(), in.Choice)
+		if err != nil {
+			writeInstallError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, state)
+	})
+	mux.HandleFunc("GET /api/catalog", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, http.StatusOK, d.Service.CatalogSnapshot()) })
+	mux.HandleFunc("POST /api/catalog/fetch", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Channel string `json:"channel"`
+		}
+		if !readJSON(w, r, &in) {
+			return
+		}
+		state, err := d.Service.CatalogFetch(r.Context(), in.Channel)
+		if err != nil {
+			writeInstallError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, state)
+	})
+	mux.HandleFunc("POST /api/import", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Path string `json:"path"`
+		}
+		if !readJSON(w, r, &in) {
+			return
+		}
+		state, err := d.Service.ImportFile(r.Context(), in.Path)
+		if err != nil {
+			writeInstallError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, state)
+	})
+	mux.HandleFunc("POST /api/devices/designate-stock", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Location string `json:"location"`
+		}
+		if !readJSON(w, r, &in) {
+			return
+		}
+		state, err := d.Service.DesignateStock(r.Context(), in.Location)
+		if err != nil {
+			writeInstallError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, state)
+	})
+
 	mux.HandleFunc("GET /api/install/log", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")

@@ -140,6 +140,9 @@ func Run() error {
 	if err != nil {
 		return err
 	}
+	if err := svc.ConfigureDefaultStorage(); err != nil {
+		return err
+	}
 	svc.SetADB(adb.NewConnector())
 	svc.SetSleepInhibitor(power.NewSystem())
 	settings := NewSettingsStore(dir)

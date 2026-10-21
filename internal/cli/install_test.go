@@ -32,6 +32,8 @@ type cliDevice struct {
 func (d *cliDevice) Shell(_ context.Context, cmd string) (adb.Result, error) {
 	out := ""
 	switch {
+	case cmd == "cat /proc/cmdline":
+		out = "androidboot.serialno=cli-board"
 	case strings.Contains(cmd, "uname -r"):
 		out = "root\t0\nkernel\t5.15.0-handsomekernel+\nmodel\tHandsome Openstick\ndebian\t11\narch\tarm64\n"
 	case strings.HasPrefix(cmd, "dpkg-query "):

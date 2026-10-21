@@ -177,3 +177,8 @@ func (b *libusbBulk) Close() error {
 	b.ctx, b.dev, b.cfg, b.intf = nil, nil, nil, nil
 	return errors.Join(errs...)
 }
+
+// SerialNumber is read only after a caller explicitly opens this USB interface.
+func (b *libusbBulk) SerialNumber() (string, error) { return b.dev.SerialNumber() }
+
+func TransfersSupported() bool { return true }

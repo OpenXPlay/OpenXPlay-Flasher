@@ -26,22 +26,32 @@ type StepProgress struct {
 // Job is an immutable snapshot sent to the shells after each change. Installed is the last read
 // of dpkg; Observed says whether that read describes the device after this job finished.
 type Job struct {
-	Status    string         `json:"status"`
-	Started   time.Time      `json:"started"`
-	Finished  time.Time      `json:"finished,omitempty"`
-	Steps     []StepProgress `json:"steps"`
-	Failed    int            `json:"failed"`
-	Problem   *Problem       `json:"problem,omitempty"`
-	Left      string         `json:"left,omitempty"`
-	Installed *Facts         `json:"installed,omitempty"`
-	Observed  bool           `json:"observed"`
-	Log       string         `json:"log"`
-	LogCapped bool           `json:"logCapped"`
+	Profile   string            `json:"profile,omitempty"`
+	Serial    string            `json:"serial,omitempty"`
+	Plan      string            `json:"plan,omitempty"`
+	Status    string            `json:"status"`
+	Started   time.Time         `json:"started"`
+	Finished  time.Time         `json:"finished,omitempty"`
+	Steps     []StepProgress    `json:"steps"`
+	Failed    int               `json:"failed"`
+	Problem   *Problem          `json:"problem,omitempty"`
+	Left      string            `json:"left,omitempty"`
+	Installed *Facts            `json:"installed,omitempty"`
+	Observed  bool              `json:"observed"`
+	Log       string            `json:"log"`
+	LogCapped bool              `json:"logCapped"`
+	Written   []string          `json:"written,omitempty"`
+	Pending   []string          `json:"pending,omitempty"`
+	Uncertain string            `json:"uncertain,omitempty"`
+	Findings  map[string]string `json:"findings,omitempty"`
 }
 
 // Executor's connection and guard come from the service's fresh one-device scans. It never owns
 // a bus or starts another job; the service holds its shared device lock for the entire run.
 type Executor struct {
+	// Confirm binds an existing connection to the job identity without opening a second USB handle.
+	Confirm        func(context.Context, adb.Device) error
+	Checkpoint     func(context.Context, Step, string) error
 	Connect        func(context.Context) (adb.Device, error)
 	Guard          func(context.Context) error
 	Profile        profile.Profile
@@ -125,6 +135,11 @@ func lastStage(out string) string {
 func matchesMarker(line, want string) bool { return line == want || strings.HasPrefix(line, want+" ") }
 
 func (e *Executor) inspect(ctx context.Context) (Facts, error) {
+	if e.Confirm != nil {
+		if err := e.Confirm(ctx, e.dev); err != nil {
+			return Facts{}, err
+		}
+	}
 	return Inspect(ctx, e.run, e.Profile, e.Packages)
 }
 
@@ -185,10 +200,18 @@ func (e *Executor) Run(ctx context.Context, plan Plan) Job {
 				break
 			}
 		}
-		if pkg == nil {
-			err = &Problem{"no-package", s.Layer}
-		} else {
-			err = e.step(ctx, s, pkg)
+		if e.Checkpoint != nil {
+			err = e.Checkpoint(ctx, s, "running")
+		}
+		if err == nil {
+			if pkg == nil {
+				err = &Problem{"no-package", s.Layer}
+			} else {
+				err = e.step(ctx, s, pkg)
+			}
+		}
+		if err == nil && e.Checkpoint != nil {
+			err = e.Checkpoint(ctx, s, "ok")
 		}
 		if err != nil {
 			e.job.Steps[i].Status, e.job.Failed = "failed", i
@@ -237,6 +260,11 @@ func (e *Executor) step(ctx context.Context, s Step, pkg *Package) error {
 	}
 	stepCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if e.Confirm != nil && e.dev != nil {
+		if err := e.Confirm(stepCtx, e.dev); err != nil {
+			return err
+		}
+	}
 	m := pkg.manifest
 	remote := path.Join(m.DeviceDir, pkg.filename)
 	dir := m.DeviceDir
@@ -396,6 +424,11 @@ func (e *Executor) verifyDevice(ctx context.Context, cmd, success string) error 
 	for verifyCtx.Err() == nil {
 		if err := e.Guard(verifyCtx); err != nil {
 			return err
+		}
+		if e.Confirm != nil {
+			if err := e.Confirm(verifyCtx, e.dev); err != nil {
+				return err
+			}
 		}
 		last = e.command(verifyCtx, cmd, success)
 		if last == nil {

@@ -189,16 +189,18 @@ function choiceButton(id, text, enabled) {
 
 function suggested(id) { return view.state?.suggested === id ? el("span", { class: "tag suggested" }, t("Suggested")) : ""; }
 
+function stepLabel(s) { return s.name?.[lang()] || s.name?.en || t(ACTION_TEXT[s.action] || s.action); }
+
 function stepList(choice) {
   return el("details", { open: true, class: "choice-steps" }, [el("summary", {}, t("Show steps")),
-    el("ol", {}, choice.steps.map((s) => el("li", {}, name(s.layer) + ": " + t(ACTION_TEXT[s.action]))))]);
+    el("ol", {}, choice.steps.map((s) => el("li", {}, name(s.layer) + ": " + stepLabel(s))))]);
 }
 
 function chooseView() {
   const state = view.state;
   const parts = [title(t("Choose layers")), freshness(state?.installedStale)];
   const full = selectedChoice(state, "full");
-  if (full?.problem?.code === "base-missing") {
+  if (full?.problem?.code === "base-missing" && !state.choices.some((c) => c.name)) {
     return [...parts, el("p", { class: "warning", role: "status" }, problemText(t, full.problem)), guide()];
   }
   if (full) parts.push(el("div", { class: "full-choice" + (state.suggested === "full" ? " suggested-choice" : "") }, [
@@ -214,6 +216,14 @@ function chooseView() {
       row.reason ? el("p", { class: "note" }, problemText(t, row.reason)) : "",
     ]),
   ]))));
+  for (const c of state?.choices || []) {
+    if (!c.name) continue;
+    parts.push(el("div", { class: "full-choice" }, [
+      choiceButton(c.id, c.name[lang()] || c.name.en, canChoose(state, c.id)),
+      c.reason ? el("p", { class: "note" }, c.reason[lang()] || c.reason.en) :
+        c.problem ? el("p", { class: "note" }, problemText(t, c.problem)) : "",
+    ]));
+  }
   const selected = selectedChoice(state, view.choice);
   if (selected && !selected.problem) parts.push(stepList(selected));
   parts.push(el("div", { class: "actions" }, [back(0), next(2, canChoose(state, view.choice))]));
@@ -306,13 +316,13 @@ function jobView(job) {
     const step = job.steps[job.failed];
     parts.push(el("div", { id: "install-result", tabindex: "-1", class: "error-box", role: "alert" }, [el("strong", {}, t("Installation failed.")),
       el("p", { class: "unplug-status" }, t(unplugText(job))),
-      step ? el("p", {}, t("Failed step: {layer} — {step}", { layer: name(step.layer), step: t(ACTION_TEXT[step.action]) })) : "",
+      step ? el("p", {}, t("Failed step: {layer} — {step}", { layer: name(step.layer), step: stepLabel(step) })) : "",
       el("p", {}, problemText(t, job.problem)), el("p", {}, t(LEFT_TEXT[job.left] || LEFT_TEXT.partial)),
       installed(job.installed, !job.observed || view.state.installedStale),
     ]));
   }
   parts.push(el("ol", { class: "job-steps" }, job.steps.map((s) => el("li", { class: s.status, "aria-current": s.status === "running" ? "step" : false }, [
-    name(s.layer) + ": " + t(ACTION_TEXT[s.action]), el("span", {}, t(STATUS_TEXT[s.status])),
+    name(s.layer) + ": " + stepLabel(s), el("span", {}, t(STATUS_TEXT[s.status])),
   ]))));
   const details = el("details", { id: "install-log" }, [el("summary", { id: "install-log-summary" }, t("Session log")),
     job.logCapped ? el("p", { class: "note" }, t("The log reached its limit; only the most recent 1 MiB is kept.")) : "",

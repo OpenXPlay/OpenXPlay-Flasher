@@ -112,7 +112,7 @@ func runInstall(svc *app.Service, files []string, only string, downgrade, yes bo
 
 func printPlanProblem(w io.Writer, p *stage.Problem) {
 	if p.Code == "base-missing" {
-		fmt.Fprintln(w, "Install the base system first; this version cannot flash it yet.")
+		fmt.Fprintln(w, "Install the base system first. / 请先安装基础系统。")
 		return
 	}
 	fmt.Fprintln(w, "Cannot install:", p)

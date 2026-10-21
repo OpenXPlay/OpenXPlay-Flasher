@@ -171,3 +171,21 @@ test("a missing base offers only the localized guide", async () => {
   assert.equal(guide.attributes.href, boot.links["zh-CN"].manual);
   assert.equal(guide.textContent, t("Manual base installation guide"));
 });
+
+test("base choices render their localized names, reasons and named steps", async () => {
+  const d = dom(); setLang("zh-CN");
+  const savedInterval = globalThis.setInterval; globalThis.setInterval = () => 0;
+  const page = await import("../assets/install.js?base-choices"); page.init(boot); globalThis.setInterval = savedInterval;
+  const s = snapshot();
+  s.choices.push({ id: "stock", name: { en: "Install from stock", "zh-CN": "从原厂固件安装" },
+    reason: { en: "Needs original firmware", "zh-CN": "需要原厂固件" }, problem: { code: "wrong-mode" },
+    layers: ["base", "device", "relay"], destructive: true, needs: [], steps: [] });
+  s.choices.push({ id: "base", name: { en: "Reinstall base", "zh-CN": "重新安装基础系统" },
+    layers: ["base"], destructive: true, needs: [{ layer: "base" }], steps: [{ layer: "base", action: "flash", name: { en: "Write rootfs", "zh-CN": "写入根文件系统" } }] });
+  page.receive(s);
+  assert.equal(d.get("choice-stock").disabled, true);
+  assert.ok(d.root.textContent.includes("需要原厂固件"));
+  await d.get("choice-base").click();
+  assert.ok(d.root.textContent.includes("写入根文件系统"));
+  assert.ok(!d.root.textContent.includes("undefined"));
+});

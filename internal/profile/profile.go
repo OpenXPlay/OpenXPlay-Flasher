@@ -24,13 +24,14 @@ import (
 	"strconv"
 )
 
-// Mode is the USB transport a device offers.
+// Mode is a USB transport or an explicitly designated stock adb state.
 type Mode string
 
 const (
 	ModeADB      Mode = "adb"
 	ModeFastboot Mode = "fastboot"
 	ModeEDL      Mode = "edl"
+	ModeStock    Mode = "stock" // Explicitly designated original firmware over adb.
 )
 
 // Text is a string per UI language; "en" and "zh-CN" are required.
@@ -86,6 +87,7 @@ type Profile struct {
 	Name Text   `json:"name"`
 	// Family groups models that share USB IDs, so USB alone cannot tell them apart; the flasher
 	// confirms the model over adb or fastboot before writing.
+	Base   *Base      `json:"base,omitempty"`
 	Family string     `json:"family"`
 	USB    []USBMatch `json:"usb"`
 	Layers []Layer    `json:"layers"`
@@ -188,6 +190,11 @@ func (p Profile) Validate() error {
 			return fmt.Errorf("profile %s: destructive layer %s sits above a non-destructive one", p.ID, l.ID)
 		}
 		destructiveDone = destructiveDone || !l.Destructive
+	}
+	if p.Base != nil {
+		if err := p.Base.Validate(); err != nil {
+			return fmt.Errorf("profile %s: base: %w", p.ID, err)
+		}
 	}
 	return p.validateConfig()
 }

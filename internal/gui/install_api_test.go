@@ -45,6 +45,8 @@ type installDevice struct {
 
 func (d *installDevice) Shell(ctx context.Context, cmd string) (adb.Result, error) {
 	switch {
+	case cmd == "cat /proc/cmdline":
+		return adb.Result{Stdout: []byte("androidboot.serialno=fixture-board")}, nil
 	case strings.Contains(cmd, "uname -r"):
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -276,7 +278,7 @@ func TestInstallRefusalsAndDowngrade(t *testing.T) {
 	if rec := f.do("POST", "/api/install/start", `{"choice":"relay"}`); rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != "downgrade" {
 		t.Fatalf("downgrade=%d %s", rec.Code, rec.Body)
 	}
-	if rec := f.do("POST", "/api/install/start", `{"choice":"base"}`); rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != "bad-choice" {
+	if rec := f.do("POST", "/api/install/start", `{"choice":"base"}`); rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != "typed-serial" {
 		t.Fatalf("base=%d %s", rec.Code, rec.Body)
 	}
 	bus.Set(usb.DeviceInfo{VendorID: 0x18d1, ProductID: 0xd001, Address: 1}, usb.DeviceInfo{VendorID: 0x18d1, ProductID: 0xd001, Address: 2})
@@ -365,13 +367,13 @@ func TestLayerChoiceAPIWithoutPackages(t *testing.T) {
 				dev.version = ""
 			}
 			s := installState(t, f)
-			if len(s.Layers) != 3 || len(s.Choices) != 3 || s.Suggested != tc.suggested || len(s.Packages) != 0 {
+			if len(s.Layers) != 3 || len(s.Choices) != 6 || s.Suggested != tc.suggested || len(s.Packages) != 0 {
 				t.Fatalf("state=%+v", s)
 			}
-			if s.Layers[0].Action != "guide" || s.Layers[0].Choice != "" || s.Layers[0].Name["zh-CN"] == "" {
+			if s.Layers[0].Action != "install" || s.Layers[0].Choice != "base" || s.Layers[0].Name["zh-CN"] == "" {
 				t.Fatalf("base=%+v", s.Layers[0])
 			}
-			for _, c := range s.Choices {
+			for _, c := range s.Choices[:3] {
 				if c.Ready || len(c.Needs) == 0 || len(c.Steps) == 0 {
 					t.Fatalf("choice=%+v", c)
 				}
@@ -513,7 +515,7 @@ func TestPackageRequirementReadFailureDoesNotGateChoose(t *testing.T) {
 	if s.Problem != nil || s.Installed == nil || s.InstalledStale {
 		t.Fatalf("package affected discovery=%+v", s)
 	}
-	for _, c := range s.Choices {
+	for _, c := range s.Choices[:3] {
 		if c.Problem != nil {
 			t.Fatalf("package gated choose=%+v", c)
 		}
@@ -546,5 +548,21 @@ func TestCloseGuardStaysArmedThroughFailureReadback(t *testing.T) {
 	}
 	if !svc.InstallRunning() || svc.InstallSnapshot().Job.Status != "running" || p.released.Load() != 0 {
 		t.Fatal("warning and guard ended before readback")
+	}
+}
+
+func TestDestructiveAPIDemandsTypedDeviceSerial(t *testing.T) {
+	f, _, _, dev, _ := installFixture(t, true)
+	for _, choice := range []string{"base", "full-reinstall"} {
+		for _, confirmation := range []string{"", "another-board"} {
+			body, _ := json.Marshal(map[string]string{"choice": choice, "yesErase": confirmation})
+			rec := f.do("POST", "/api/install/start", string(body))
+			if rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != "typed-serial" {
+				t.Fatalf("%s: %d %s", choice, rec.Code, rec.Body)
+			}
+		}
+	}
+	if dev.pushes != 0 {
+		t.Fatal("destructive refusal wrote a package")
 	}
 }

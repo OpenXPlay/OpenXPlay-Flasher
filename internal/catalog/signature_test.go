@@ -27,6 +27,11 @@ func testSecret(t *testing.T) SecretKey {
 
 func signedIndex(t *testing.T, i *Index) ([]byte, []byte) {
 	t.Helper()
+	old := trustedPublicKeys
+	trustedPublicKeys = []string{`untrusted comment: test only
+RWQBAgMEBQYHCNdamAGCsQq31Uv+08lkBzoO4XLz2qYjJa8CGmj3B1Ea
+`}
+	t.Cleanup(func() { trustedPublicKeys = old })
 	b := indexBytes(t, i)
 	s, err := Sign(b, testSecret(t), time.Unix(1792627200, 0))
 	if err != nil {
@@ -177,5 +182,19 @@ func TestBlake2b512(t *testing.T) {
 		if got := fmt.Sprintf("%x", blake2b512(input)); got != want {
 			t.Fatalf("%d bytes: %s", size, got)
 		}
+	}
+}
+
+func TestProductionTrustRootExcludesTestKey(t *testing.T) {
+	if len(trustedPublicKeys) != 1 || !strings.Contains(trustedPublicKeys[0], "RWRp4I3XTejnpqQ7hsqb+8rgbHRGz+eRqgXTBFcYCROKsl10+BUfQT4s") {
+		t.Fatal("production trust root differs")
+	}
+	data := indexBytes(t, testIndex())
+	sig, err := Sign(data, testSecret(t), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyIndex(data, sig); err == nil {
+		t.Fatal("production trusted the fixture key")
 	}
 }

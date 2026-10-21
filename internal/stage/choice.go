@@ -41,25 +41,43 @@ type ChoiceDefinition struct {
 	Destructive bool     `json:"destructive"`
 }
 
+type ArtifactNeed struct {
+	Role     string   `json:"role"`
+	Name     string   `json:"name"`
+	Size     int64    `json:"size"`
+	SHA256   string   `json:"sha256"`
+	Source   string   `json:"source"`
+	Done     int64    `json:"done"`
+	Total    int64    `json:"total"`
+	Verified bool     `json:"verified"`
+	Error    *Problem `json:"error,omitempty"`
+}
+
 type PackageNeed struct {
-	Layer      string       `json:"layer"`
-	FileTypes  []string     `json:"fileTypes"`
-	Status     string       `json:"status"` // missing, checked, unusable
-	Package    *PackageInfo `json:"package,omitempty"`
-	Comparison string       `json:"comparison,omitempty"` // new, upgrade, same, downgrade
-	Problem    *Problem     `json:"problem,omitempty"`
-	Ready      bool         `json:"ready"`
+	Artifacts  []ArtifactNeed `json:"artifacts,omitempty"`
+	Layer      string         `json:"layer"`
+	FileTypes  []string       `json:"fileTypes"`
+	Status     string         `json:"status"` // missing, checked, unusable
+	Package    *PackageInfo   `json:"package,omitempty"`
+	Comparison string         `json:"comparison,omitempty"` // new, upgrade, same, downgrade
+	Problem    *Problem       `json:"problem,omitempty"`
+	Ready      bool           `json:"ready"`
 }
 
 type Choice struct {
-	ID          string        `json:"id"`
-	Layers      []string      `json:"layers"`
-	Needs       []PackageNeed `json:"needs"`
-	Destructive bool          `json:"destructive"`
-	Steps       []Step        `json:"steps"`
-	Problem     *Problem      `json:"problem,omitempty"` // device state only, never packages
-	Ready       bool          `json:"ready"`
-	Downgrade   bool          `json:"downgrade"`
+	BasePlan       string        `json:"basePlan,omitempty"`
+	Name           profile.Text  `json:"name,omitempty"`
+	Reason         profile.Text  `json:"reason,omitempty"`
+	Serial         string        `json:"serial,omitempty"`
+	BackupRequired bool          `json:"backupRequired"`
+	ID             string        `json:"id"`
+	Layers         []string      `json:"layers"`
+	Needs          []PackageNeed `json:"needs"`
+	Destructive    bool          `json:"destructive"`
+	Steps          []Step        `json:"steps"`
+	Problem        *Problem      `json:"problem,omitempty"` // device state only, never packages
+	Ready          bool          `json:"ready"`
+	Downgrade      bool          `json:"downgrade"`
 }
 
 type LayerRow struct {
@@ -80,13 +98,18 @@ type layerRecipe struct {
 	actionName  profile.Text
 }
 
-// Only layers with an executor recipe become choices. The base currently remains a guide.
+// Stage recipes cover adb layers. The app composes destructive choices with the base executor.
 var layerRecipes = map[string]layerRecipe{
 	"device": {fileTypes: []string{".tar.gz"}, actions: []string{"requirements", "clock", "prepare", "push", "checksum", "unpack", "preflight", "install", "reboot", "wait", "verify"}, deferVerify: true},
 	"relay":  {fileTypes: []string{".deb", ".manifest.json"}, actions: []string{"requirements", "clock", "prepare", "push", "checksum", "install", "verify"}},
 }
 
-func PackageFileTypes(layer string) []string { return slices.Clone(layerRecipes[layer].fileTypes) }
+func PackageFileTypes(layer string) []string {
+	if layer == "base" {
+		return []string{".zip", ".img"}
+	}
+	return slices.Clone(layerRecipes[layer].fileTypes)
+}
 
 func ChoiceDefinitions(p profile.Profile) []ChoiceDefinition {
 	full := ChoiceDefinition{ID: "full", Layers: []string{}, Needs: []string{}}
@@ -124,7 +147,7 @@ func DescribeChoice(p profile.Profile, installed Facts, def ChoiceDefinition) Ch
 			}
 		}
 		for _, action := range layerRecipes[id].actions {
-			step := Step{Layer: id, Action: action}
+			step := Step{Layer: id, Action: action, Resumable: true}
 			if action == "verify" && layerRecipes[id].deferVerify && i < len(def.Layers)-1 {
 				deferred = append(deferred, step)
 			} else {
@@ -135,7 +158,7 @@ func DescribeChoice(p profile.Profile, installed Facts, def ChoiceDefinition) Ch
 	}
 	c.Steps = append(c.Steps, deferred...)
 	if len(c.Steps) > 0 {
-		c.Steps = append(c.Steps, Step{Layer: c.Steps[len(c.Steps)-1].Layer, Action: "installed"})
+		c.Steps = append(c.Steps, Step{Layer: c.Steps[len(c.Steps)-1].Layer, Action: "installed", Resumable: true})
 	}
 	return c
 }

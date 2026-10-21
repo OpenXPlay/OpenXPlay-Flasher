@@ -5,7 +5,10 @@
 package fastboot
 
 import (
+	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -63,3 +66,33 @@ func (img *Image) Sparse() bool { return img.sparse != nil }
 
 // Close releases the source file. It must not run concurrently with Flash.
 func (img *Image) Close() error { return img.file.Close() }
+
+// Verify hashes the stored bytes through the same open handle used by Flash. This lets callers
+// bind a pinned digest to an image without reopening a mutable path after checking it.
+func (img *Image) Verify(ctx context.Context, size int64, sum string) error {
+	if img.stored != size {
+		return &ImageError{Message: "pinned size mismatch"}
+	}
+	h := sha256.New()
+	r := io.NewSectionReader(img.source, 0, size)
+	buf := make([]byte, 32<<10)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n, err := r.Read(buf)
+		if n > 0 {
+			h.Write(buf[:n])
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if hex.EncodeToString(h.Sum(nil)) != sum {
+		return &ImageError{Message: "pinned SHA-256 mismatch"}
+	}
+	return nil
+}

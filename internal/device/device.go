@@ -22,6 +22,7 @@ const (
 	ModeADB      = profile.ModeADB
 	ModeFastboot = profile.ModeFastboot
 	ModeEDL      = profile.ModeEDL
+	ModeStock    = profile.ModeStock
 )
 
 // Generic signatures for devices no profile names: the Android vendor class interfaces (ff/42/xx)
@@ -38,8 +39,11 @@ const (
 
 // Candidate is a device that may be one the flasher supports.
 type Candidate struct {
-	Mode Mode           `json:"mode"`
-	USB  usb.DeviceInfo `json:"usb"`
+	Product   string         `json:"product,omitempty"`
+	Serialno  string         `json:"serialno,omitempty"`
+	ReadError string         `json:"readError,omitempty"`
+	Mode      Mode           `json:"mode"`
+	USB       usb.DeviceInfo `json:"usb"`
 	// Profiles lists the IDs of the profiles whose USB signature matches, sorted. Several match when
 	// models share IDs (an OpenStick family); none match for an unknown adb or fastboot device,
 	// such as a phone.
@@ -102,7 +106,7 @@ type Snapshot struct {
 // Equal reports whether two snapshots show the same devices and error.
 func (s Snapshot) Equal(o Snapshot) bool {
 	return s.Error == o.Error && slices.EqualFunc(s.Candidates, o.Candidates, func(a, b Candidate) bool {
-		return a.Mode == b.Mode && slices.Equal(a.Profiles, b.Profiles) && a.USB.ID() == b.USB.ID() &&
+		return a.Product == b.Product && a.Serialno == b.Serialno && a.ReadError == b.ReadError && a.Mode == b.Mode && slices.Equal(a.Profiles, b.Profiles) && a.USB.ID() == b.USB.ID() &&
 			a.USB.Location() == b.USB.Location() && a.USB.Address == b.USB.Address
 	})
 }

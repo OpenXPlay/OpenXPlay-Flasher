@@ -35,6 +35,23 @@ Commands:
   profiles         list the supported device models and their layers
   install [-only device|relay] [-downgrade] [-yes] PACKAGE...
                    install checked local layer packages over adb (asks for y without -yes)
+  catalog fetch [--channel C], catalog show
+                   fetch/show the signed catalog / 获取或查看签名目录
+  download --layer base|device|relay [--version V]
+                   download verified files to the cache / 下载并验证文件
+  import FILE...   import files by SHA-256 / 按 SHA-256 导入文件
+  backup list|show SERIAL|verify SERIAL
+  backup import DIR --serial SERIAL
+                   manage modem backups / 管理调制解调器备份
+  fastboot getvar NAME
+                   read one bootloader variable / 只读引导程序变量
+  designate-stock LOCATION
+                   designate stock adb for this session / 为本次会话指定原厂 adb
+  plan --choice ID print steps without running them / 仅显示方案步骤
+  install --choice ID [--yes-erase SERIAL] [--stock-adb SERIAL] [PACKAGE...]
+                   install from catalog or local files / 从目录或本地文件安装
+                   choices: stock, base, full-reinstall, repair, full, device, relay
+                   --choice full-reinstall --base-plan repair: C + device + relay / 修复并完整安装
   config-get PATH  print a configuration file of the connected device
   config-put PATH FILE
                    write FILE to PATH on the device (backup first; the relay restarts for
@@ -57,6 +74,10 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	cmd := args[0]
+	switch cmd {
+	case "catalog", "download", "import", "backup", "fastboot", "designate-stock", "plan", "install":
+		return runEngineCLI(cmd, args[1:], os.Stdin, stdout, stderr)
+	}
 	if cmd == "help" || cmd == "-h" || cmd == "--help" {
 		fmt.Fprint(stdout, usage)
 		return 0

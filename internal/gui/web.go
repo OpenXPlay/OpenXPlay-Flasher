@@ -59,6 +59,9 @@ func ServeWeb(ctx context.Context, addr string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := svc.ConfigureDefaultStorage(); err != nil {
+		return err
+	}
 	svc.SetADB(adb.NewConnector())
 	svc.SetSleepInhibitor(power.NewSystem())
 	svc.Start(ctx)

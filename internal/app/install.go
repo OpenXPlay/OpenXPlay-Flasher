@@ -11,10 +11,13 @@ import (
 	"time"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/base"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/catalog"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/power"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 )
 
 const EventInstall = "flasher:install"
@@ -27,15 +30,19 @@ type InstallTarget struct {
 }
 
 type InstallState struct {
-	Target         *InstallTarget      `json:"target,omitempty"`
-	Installed      *stage.Facts        `json:"installed,omitempty"`
-	Packages       []stage.PackageInfo `json:"packages"`
-	Layers         []stage.LayerRow    `json:"layers"`
-	Choices        []stage.Choice      `json:"choices"`
-	Suggested      string              `json:"suggested"`
-	InstalledStale bool                `json:"installedStale"`
-	Problem        *stage.Problem      `json:"problem,omitempty"`
-	Job            *stage.Job          `json:"job,omitempty"`
+	Artifacts      []stage.ArtifactNeed `json:"artifacts"`
+	Catalog        CatalogState         `json:"catalog"`
+	Identity       *base.Identity       `json:"identity,omitempty"`
+	Resume         *base.Journal        `json:"resume,omitempty"`
+	Target         *InstallTarget       `json:"target,omitempty"`
+	Installed      *stage.Facts         `json:"installed,omitempty"`
+	Packages       []stage.PackageInfo  `json:"packages"`
+	Layers         []stage.LayerRow     `json:"layers"`
+	Choices        []stage.Choice       `json:"choices"`
+	Suggested      string               `json:"suggested"`
+	InstalledStale bool                 `json:"installedStale"`
+	Problem        *stage.Problem       `json:"problem,omitempty"`
+	Job            *stage.Job           `json:"job,omitempty"`
 }
 
 func installProblem(err error) *stage.Problem {
@@ -48,7 +55,7 @@ func installProblem(err error) *stage.Problem {
 		code string
 	}{
 		{ErrNoADB, "no-adb"}, {ErrNoDevice, "no-device"}, {ErrSeveralDevices, "several-devices"},
-		{ErrNotADB, "not-adb"}, {ErrUnconfirmed, "unconfirmed"}, {ErrDeviceBusy, "busy"},
+		{usb.ErrTransfersUnsupported, "fastboot-unsupported"}, {ErrNotADB, "not-adb"}, {ErrUnconfirmed, "unconfirmed"}, {ErrDeviceBusy, "busy"},
 	} {
 		if errors.Is(err, entry.err) {
 			return &stage.Problem{Code: entry.code}
@@ -66,7 +73,7 @@ func (s *Service) installDevice(ctx context.Context) (InstallTarget, profile.Pro
 	if connector == nil {
 		return InstallTarget{}, profile.Profile{}, ErrNoADB
 	}
-	snap := s.detector.Scan(ctx)
+	snap := s.scanDevices(ctx, false)
 	if snap.Error != "" {
 		return InstallTarget{}, profile.Profile{}, &stage.Problem{Code: "usb", Detail: snap.Error}
 	}
@@ -98,8 +105,11 @@ func (s *Service) installDevice(ctx context.Context) (InstallTarget, profile.Pro
 }
 
 func (s *Service) installSnapshotLocked() InstallState {
-	state := InstallState{Target: s.installTarget, Installed: s.installed, Packages: stage.PackageInfos(s.packages),
+	state := InstallState{Catalog: s.catalogState, Identity: s.baseIdentity, Resume: s.unfinished, Target: s.installTarget, Installed: s.installed, Packages: stage.PackageInfos(s.packages),
 		Layers: []stage.LayerRow{}, Choices: []stage.Choice{}, Problem: s.installProblem, Job: s.installJob, InstalledStale: s.installStale}
+	for _, key := range sortedKeys(s.artifacts) {
+		state.Artifacts = append(state.Artifacts, s.artifacts[key])
+	}
 	var p profile.Profile
 	if state.Target != nil {
 		for _, candidate := range s.profiles {
@@ -117,6 +127,7 @@ func (s *Service) installSnapshotLocked() InstallState {
 		}
 		state.Layers = stage.LayerRows(p, *state.Installed, state.Choices)
 		state.Suggested = stage.SuggestedChoice(state.Choices, *state.Installed)
+		s.extendBaseChoicesLocked(&state, p)
 	}
 	return state
 }
@@ -137,6 +148,9 @@ func (s *Service) emitInstall() InstallState {
 }
 
 func (s *Service) inspectInstall(ctx context.Context, choice string) (profile.Profile, error) {
+	if handled, p, err := s.inspectBaseTarget(ctx); handled {
+		return p, err
+	}
 	target, p, err := s.installDevice(ctx)
 	var facts stage.Facts
 	packageProblems := map[string]*stage.Problem{}
@@ -150,6 +164,14 @@ func (s *Service) inspectInstall(ctx context.Context, choice string) (profile.Pr
 		var d adb.Device
 		d, err = connector.Connect(ctx, target.Device.USB)
 		if err == nil {
+			serial, serialErr := base.LinuxSerial(ctx, d)
+			s.mu.Lock()
+			s.baseIdentity = nil
+			s.unfinished = nil
+			if serialErr == nil {
+				s.baseIdentity = &base.Identity{Mode: profile.ModeADB, Serial: serial, Location: target.Device.USB.Location()}
+			}
+			s.mu.Unlock()
 			// Discover installed layers from the profile alone; package-specific observations
 			// belong to Prepare and cannot make choosing an unrelated layer fail.
 			facts, err = stage.Inspect(ctx, d.Shell, p, nil)
@@ -168,6 +190,9 @@ func (s *Service) inspectInstall(ctx context.Context, choice string) (profile.Pr
 				}
 			}
 			d.Close()
+			if err == nil && serialErr == nil {
+				err = s.loadJournal(ctx, p, serial)
+			}
 		}
 	}
 	s.mu.Lock()
@@ -206,6 +231,27 @@ func (s *Service) InstallAddForLayer(layer, filename string) (InstallState, erro
 		return s.InstallSnapshot(), ErrDeviceBusy
 	}
 	defer s.configMu.Unlock()
+	if layer == "base" {
+		size, sum, err := catalog.Hash(context.Background(), filename)
+		if err != nil {
+			return s.InstallSnapshot(), err
+		}
+		matched := false
+		for _, p := range s.profiles {
+			if p.Base != nil {
+				for _, pin := range p.Base.Archives {
+					if pin.Size == size && pin.SHA256 == sum {
+						matched = true
+					}
+				}
+			}
+		}
+		if !matched {
+			return s.InstallSnapshot(), &stage.Problem{Code: "wrong-layer", Detail: "base"}
+		}
+		err = s.importFile(context.Background(), filename)
+		return s.emitInstall(), err
+	}
 	pkg, err := stage.Open(filename)
 	if err != nil {
 		return s.InstallSnapshot(), err
@@ -216,6 +262,7 @@ func (s *Service) InstallAddForLayer(layer, filename string) (InstallState, erro
 	s.mu.Lock()
 	s.packages = slices.DeleteFunc(s.packages, func(p *stage.Package) bool { return p.Manifest().Stage == pkg.Manifest().Stage })
 	s.packages = append(s.packages, pkg)
+	s.recordLocalPackageLocked(pkg)
 	delete(s.packageProblems, pkg.Manifest().Stage)
 	// Space and required packages are re-read on refresh; loading a file changes no layer.
 	s.mu.Unlock()
@@ -228,6 +275,11 @@ func (s *Service) InstallRemove(id string) (InstallState, error) {
 	}
 	defer s.configMu.Unlock()
 	s.mu.Lock()
+	for _, pkg := range s.packages {
+		if pkg.Info().ID == id {
+			delete(s.artifacts, artifactKey(pkg.Manifest().Stage, "local"))
+		}
+	}
 	s.packages = slices.DeleteFunc(s.packages, func(p *stage.Package) bool { return p.Info().ID == id })
 	s.mu.Unlock()
 	return s.emitInstall(), nil
@@ -236,6 +288,12 @@ func (s *Service) InstallRemove(id string) (InstallState, error) {
 // InstallStart re-plans against fresh facts under the same lock held until the job finishes. The
 // request may end after this returns; the service lifetime, not the HTTP connection, owns the job.
 func (s *Service) InstallStart(ctx context.Context, req stage.Request) (InstallState, error) {
+	if req.BasePlan != "" && !isBaseChoice(req.Choice) {
+		return s.InstallSnapshot(), &stage.Problem{Code: "bad-plan"}
+	}
+	if isBaseChoice(req.Choice) {
+		return s.startBase(ctx, req)
+	}
 	if !s.configMu.TryLock() {
 		return s.InstallSnapshot(), ErrDeviceBusy
 	}
@@ -428,3 +486,5 @@ func (s *Service) InstallLog() string {
 	}
 	return s.installJob.Log
 }
+
+func sortedKeys[V any](m map[string]V) []string { keys := mapKeys(m); slices.Sort(keys); return keys }

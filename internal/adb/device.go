@@ -32,6 +32,7 @@ type transport interface {
 // device implements Device with the shell and sync protocols over a transport.
 type device struct {
 	t       transport
+	serial  string
 	shellV2 bool
 	closed  atomic.Bool
 }
@@ -145,4 +146,14 @@ func readAllMax(r io.Reader, max int) ([]byte, error) {
 		return nil, fmt.Errorf("adb: shell output exceeds %d bytes", max)
 	}
 	return data, err
+}
+
+// Serial identifies this already-open transport, without probing another device.
+func (d *device) Serial() string { return d.serial }
+
+func TransportSerial(d Device, fallback string) string {
+	if s, ok := d.(interface{ Serial() string }); ok && s.Serial() != "" {
+		return s.Serial()
+	}
+	return fallback
 }

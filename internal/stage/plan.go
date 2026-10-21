@@ -22,12 +22,18 @@ func (p *Problem) Error() string { return p.Code + ": " + p.Detail }
 type Request struct {
 	Choice    string `json:"choice"`
 	Downgrade bool   `json:"downgrade"`
+	YesErase  string `json:"yesErase,omitempty"`
+	BasePlan  string `json:"basePlan,omitempty"`
 }
 
 type Step struct {
-	Layer     string `json:"layer"`
-	Action    string `json:"action"`
-	PackageID string `json:"packageId"`
+	Layer     string       `json:"layer"`
+	Action    string       `json:"action"`
+	PackageID string       `json:"packageId"`
+	ID        string       `json:"id,omitempty"`
+	Name      profile.Text `json:"name,omitempty"`
+	Critical  bool         `json:"critical"`
+	Resumable bool         `json:"resumable"`
 }
 
 type Plan struct {
@@ -124,7 +130,7 @@ func BuildPlan(p profile.Profile, installed Facts, packages []*Package, req Requ
 		}
 		add := func(actions ...string) {
 			for _, a := range actions {
-				plan.Steps = append(plan.Steps, Step{layer.ID, a, pkg.digest})
+				plan.Steps = append(plan.Steps, Step{Layer: layer.ID, Action: a, PackageID: pkg.digest, Resumable: true})
 			}
 		}
 		add("requirements", "clock", "prepare", "push", "checksum")
@@ -149,11 +155,11 @@ func BuildPlan(p profile.Profile, installed Facts, packages []*Package, req Requ
 		return fail("no-package", req.Choice)
 	}
 	if deferred != nil {
-		plan.Steps = append(plan.Steps, Step{"device", "verify", deferred.digest})
+		plan.Steps = append(plan.Steps, Step{Layer: "device", Action: "verify", PackageID: deferred.digest, Resumable: true})
 	}
 	// A final inspection records actual installed versions, including after verification retries.
 	last := plan.Steps[len(plan.Steps)-1]
-	plan.Steps = append(plan.Steps, Step{last.Layer, "installed", last.PackageID})
+	plan.Steps = append(plan.Steps, Step{Layer: last.Layer, Action: "installed", PackageID: last.PackageID, Resumable: true})
 	return plan
 }
 

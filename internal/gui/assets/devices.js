@@ -8,6 +8,7 @@ const MODE_LABELS = {
   adb: "Linux running, adb on",
   fastboot: "Fastboot (bootloader)",
   edl: "Emergency download (EDL 9008)",
+  stock: "Original firmware (designated)",
 };
 
 // Unsupported devices get the bare transport: their system is unknown.

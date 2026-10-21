@@ -8,6 +8,7 @@
 import { t, setLang, lang, translateStatic } from "./i18n.js";
 import { deviceView, modelView, modeLabel, otherModeLabel, usbId, usbPort } from "./devices.js";
 import { api, el } from "./ui.js";
+import { problemText } from "./installlogic.js";
 import * as configView from "./config.js";
 import * as installView from "./install.js";
 import * as settingsView from "./settings.js";
@@ -33,6 +34,8 @@ function deviceCard(c) {
     el("dt", {}, t("USB ID")), el("dd", {}, usbId(c.usb)),
     el("dt", {}, t("Port")), el("dd", {}, usbPort(c.usb)),
   ];
+  if (c.product) rows.push(el("dt", {}, t("Product")), el("dd", {}, c.product));
+  if (c.serialno) rows.push(el("dt", {}, t("Board serial")), el("dd", {}, c.serialno));
   if (model.layers.length) {
     rows.push(el("dt", {}, t("Layers")), el("dd", {}, el("ol", {}, model.layers.map((l) =>
       el("li", {}, [l.name, l.destructive ? el("span", { class: "tag" }, t("erases the device")) : ""])))));
@@ -75,8 +78,15 @@ function renderDevices() {
       : t("{n} other Android devices are connected and ignored.", { n: view.others.length });
     const details = el("details", { class: "others" }, [
       el("summary", { "data-focus": "others" }, summary),
-      el("p", {}, t("A supported model that is not recognised yet, for example one still on its original firmware, may be among them; it is recognised once its USB IDs are added.")),
-      el("ul", {}, view.others.map((c) => el("li", {}, usbId(c.usb) + " · " + t(otherModeLabel(c.mode)) + " · " + usbPort(c.usb)))),
+      el("p", {}, t("Unknown adb devices are ignored until you explicitly designate one as a UFI003 with its original firmware.")),
+      el("ul", {}, view.others.map((c) => el("li", {}, [usbId(c.usb) + " · " + t(otherModeLabel(c.mode)) + " · " + usbPort(c.usb) + (c.product ? " · " + c.product + " · " + c.serialno : ""),
+        c.mode === "adb" ? el("button", { type: "button", onclick: async () => {
+          try { await api("devices/designate-stock", { location: usbPort(c.usb) }); state.designationError=""; }
+          catch (error) { state.designationError = problemText(t, { code: error.code, detail: error.message }); }
+          renderDevices();
+        } }, t("This is a UFI003 with its original firmware")) : "",
+      ])))),
+      state.designationError ? el("p", { class: "error-box" }, state.designationError) : "",
     ]);
     details.open = state.othersOpen;
     details.addEventListener("toggle", () => { state.othersOpen = details.open; });

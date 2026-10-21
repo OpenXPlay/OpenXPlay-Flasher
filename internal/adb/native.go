@@ -139,7 +139,12 @@ func (c USBConnector) Connect(ctx context.Context, dev usb.DeviceInfo) (Device, 
 		return nil, callErr(ctx, err)
 	}
 	t.start()
-	return newDevice(t, features), nil
+	d := newDevice(t, features)
+	d.serial = dev.Serial
+	if reader, ok := bulk.(interface{ SerialNumber() (string, error) }); ok {
+		d.serial, _ = reader.SerialNumber()
+	}
+	return d, nil
 }
 
 func (c USBConnector) loadKey() (*rsa.PrivateKey, error) {

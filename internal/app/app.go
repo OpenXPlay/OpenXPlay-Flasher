@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/base"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/catalog"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/config"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/power"
@@ -30,10 +32,23 @@ type Events interface {
 
 // Service owns one flasher session.
 type Service struct {
-	profiles []profile.Profile
-	detector device.Detector
-	events   Events
-	interval time.Duration
+	background sync.WaitGroup
+	profiles   []profile.Profile
+	detector   device.Detector
+	events     Events
+	interval   time.Duration
+
+	catalogMu                    sync.Mutex
+	catalogSource                CatalogSource
+	catalogCache                 *catalog.Cache
+	catalogState                 CatalogState
+	artifacts                    map[string]stage.ArtifactNeed
+	dataDir, cacheDir, backupDir string
+	fastbootOpen                 base.OpenFastboot
+	fastbootSupported            bool
+	baseIdentity                 *base.Identity
+	unfinished                   *base.Journal
+	designations                 map[string]stockDesignation
 
 	mu              sync.Mutex
 	current         device.Snapshot
@@ -61,7 +76,7 @@ type Service struct {
 
 // New returns a stopped service for the given profiles; Start begins watching for devices.
 func New(profiles []profile.Profile, detector device.Detector, events Events) *Service {
-	return &Service{profiles: profiles, detector: detector, events: events, interval: time.Second}
+	return &Service{profiles: profiles, detector: detector, events: events, interval: time.Second, fastbootOpen: base.NativeFastboot, fastbootSupported: usb.TransfersSupported(), designations: map[string]stockDesignation{}}
 }
 
 // NewForBus returns a service over a USB bus with the profiles built into the binary.
@@ -85,13 +100,25 @@ func (s *Service) Start(ctx context.Context) {
 	s.lifeCtx = ctx
 	done := make(chan struct{})
 	s.done = done
+	if s.catalogSource != nil && s.catalogState.Status == "not-fetched" {
+		s.background.Add(1)
+		go func() {
+			defer s.background.Done()
+			fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			_, _ = s.CatalogFetch(fetchCtx, "beta")
+		}()
+	}
+
 	go func() {
 		defer close(done)
-		device.Watch(ctx, s.detector, s.interval, func(snap device.Snapshot) {
+		device.Watch(ctx, sessionDetector{s: s}, s.interval, func(snap device.Snapshot) {
 			s.mu.Lock()
 			s.current = snap
 			s.mu.Unlock()
-			s.events.Emit(EventDevices, snap)
+			if s.events != nil {
+				s.events.Emit(EventDevices, snap)
+			}
 		})
 	}()
 }
@@ -111,6 +138,7 @@ func (s *Service) Stop() {
 		installCancel()
 		<-installDone
 	}
+	s.background.Wait()
 }
 
 // Profiles returns the supported device models.
@@ -127,5 +155,5 @@ func (s *Service) Devices() device.Snapshot {
 
 // Rescan scans now, without waiting for the next poll.
 func (s *Service) Rescan(ctx context.Context) device.Snapshot {
-	return s.detector.Scan(ctx)
+	return s.scanDevices(ctx, true)
 }

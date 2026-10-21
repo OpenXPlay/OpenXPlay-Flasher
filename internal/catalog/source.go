@@ -27,6 +27,7 @@ type Source struct {
 	BaseURLs []string
 	Client   *http.Client
 	mu       sync.Mutex
+	offline  bool
 }
 
 // NewSource uses the project website unless OXP_FLASHER_CATALOG_URL supplies a test mirror.
@@ -127,10 +128,12 @@ func (s *Source) Fetch(ctx context.Context, channel string) (*Index, error) {
 		if err := s.accept(ctx, i, data, sig, state); err != nil {
 			return nil, err
 		}
+		s.offline = false
 		return i, nil
 	}
 	i, err := s.loadCached(ctx, channel, state)
 	if err == nil {
+		s.offline = true
 		return i, nil
 	}
 	return nil, errors.Join(append(failures, err)...)
@@ -220,3 +223,6 @@ func (s *Source) accept(ctx context.Context, i *Index, data, sig []byte, state s
 	}
 	return WriteFile(ctx, filepath.Join(s.root(), "state.json"), append(b, '\n'), 0o600)
 }
+
+// Offline describes the last successful Fetch; it never changes catalog trust checks.
+func (s *Source) Offline() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.offline }

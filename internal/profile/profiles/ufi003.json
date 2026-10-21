@@ -77,5 +77,125 @@
       "format": "json",
       "restartService": true
     }
-  ]
+  ],
+  "base": {
+    "release": "openstick-v1",
+    "source": "https://github.com/OpenStick/OpenStick/releases/tag/v1",
+    "archives": {
+      "base-generic": {
+        "file": "base-generic.zip",
+        "size": 6323148,
+        "sha256": "b609b91c94b07d7cde4141a578df5c1440fbe75140f0c645c7124356774e2418"
+      },
+      "rootfs-zip": {
+        "file": "debian.zip",
+        "size": 376560506,
+        "sha256": "8be6f100e8fc3f612e0b03c199d01f51d38b953a19343ad0f4cf7a2f7a57f603"
+      },
+      "boot": {
+        "file": "boot-ufi001c.img",
+        "size": 13588480,
+        "sha256": "a2b527e98a5cee0a4c3cad5099af7ce0648246f19d20d13ef2c168e400c81b33"
+      }
+    },
+    "files": {
+      "gpt": {
+        "archive": "base-generic",
+        "member": "base/gpt_both0.bin",
+        "size": 34304,
+        "sha256": "fd046fb9171493e46e15fa3b8fdfdaa8ec6233b19b7e5151e5e166bcf425cc0f"
+      },
+      "hyp": {
+        "archive": "base-generic",
+        "member": "base/hyp.mbn",
+        "size": 12288,
+        "sha256": "0680b42298a7d691161e427543211f3ec528b21c901de6e5b13e833e772776cf"
+      },
+      "rpm": {
+        "archive": "base-generic",
+        "member": "base/rpm.mbn",
+        "size": 524288,
+        "sha256": "551beae07ab831204c8d8362d2344c37b03ba6bd590984eb44b7f560ee6b94b7"
+      },
+      "sbl1": {
+        "archive": "base-generic",
+        "member": "base/sbl1.mbn",
+        "size": 524288,
+        "sha256": "6565a3c61c0f7413f10f1027c7f9b085335aeaabc379338c37c57917ac90c4aa"
+      },
+      "tz": {
+        "archive": "base-generic",
+        "member": "base/tz.mbn",
+        "size": 605312,
+        "sha256": "2daaedaafeee5697b6d85aa329cc6af9bc7e661677e4594d75efb54e4b53fea1"
+      },
+      "aboot": {
+        "archive": "base-generic",
+        "member": "base/aboot.bin",
+        "size": 287488,
+        "sha256": "683f464ff0295d4663558db0d0d006eb4a982f0f7a6de93eb8df052a69bd456a"
+      },
+      "cdt": {
+        "archive": "base-generic",
+        "member": "base/sbc_1.0_8016.bin",
+        "size": 420,
+        "sha256": "5e2004e3b46d22a3b2b429271ff140ff77f8dd5c0816947579eca98243d69f31"
+      },
+      "rootfs": {
+        "archive": "rootfs-zip",
+        "member": "debian/rootfs.img",
+        "size": 919755256,
+        "sha256": "96d8b655f88d769fb32154e716574ef043b0f946dbdf1b6796f17703fd818677"
+      },
+      "boot": {
+        "archive": "boot",
+        "size": 13588480,
+        "sha256": "a2b527e98a5cee0a4c3cad5099af7ce0648246f19d20d13ef2c168e400c81b33"
+      }
+    },
+    "neverWrite": {
+      "fsc": {
+        "archive": "base-generic",
+        "member": "base/fsc.bin"
+      },
+      "fsg": {
+        "archive": "base-generic",
+        "member": "base/fsg.bin"
+      },
+      "modemst1": {
+        "archive": "base-generic",
+        "member": "base/modemst1.bin"
+      },
+      "modemst2": {
+        "archive": "base-generic",
+        "member": "base/modemst2.bin"
+      }
+    },
+    "protected": {
+      "fsc": 1024,
+      "fsg": 1572864,
+      "modemst1": 1572864,
+      "modemst2": 1572864
+    },
+    "fastboot": {
+      "stockProduct": "MSM8916",
+      "product": "LK1ST_MSM8916",
+      "maxPiece": 209715200
+    },
+    "stock": {
+      "properties": {
+        "ro.product.model": "msm8916_32_512",
+        "ro.product.name": "msm8916_32_512",
+        "ro.product.device": "msm8916_32_512"
+      },
+      "releasePrefix": "4.4"
+    },
+    "linux": {
+      "kernelRelease": "5.15.0-handsomekernel+",
+      "deviceTreeModel": "Handsome Openstick",
+      "debianVersion": "11",
+      "vendorId": "18d1",
+      "productId": "d001"
+    }
+  }
 }

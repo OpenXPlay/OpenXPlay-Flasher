@@ -63,7 +63,7 @@ func TestPlans(t *testing.T) {
 			case "relay":
 				packages = []*Package{r}
 			}
-			plan := BuildPlan(builtinProfile(t), f, packages, Request{tc.choice, tc.downgrade})
+			plan := BuildPlan(builtinProfile(t), f, packages, Request{Choice: tc.choice, Downgrade: tc.downgrade})
 			if tc.code != "" {
 				if plan.Problem == nil || plan.Problem.Code != tc.code || len(plan.Steps) != 0 {
 					t.Fatalf("plan=%+v", plan)

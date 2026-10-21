@@ -3,7 +3,7 @@
 // Created by riko chen on 2026-10-21
 
 // Package stage validates layer packages, plans installations and runs them over adb. A package
-// is independent of its source: local files and a future catalog use the same checked payload.
+// is independent of its source: local files and catalog downloads use the same checked payload.
 package stage
 
 import (
@@ -130,32 +130,8 @@ func Open(filename string) (*Package, error) {
 			p, err = DevicePackage(data)
 		}
 	case strings.HasSuffix(filename, ".deb"), strings.HasSuffix(filename, ".manifest.json"):
-		manifestPath := filename
-		if strings.HasSuffix(filename, ".deb") {
-			manifestPath = strings.TrimSuffix(filename, ".deb") + ".manifest.json"
-		}
-		var metadata, data []byte
-		metadata, err = readPackage(manifestPath, maxMetadata)
-		if err != nil {
-			break
-		}
-		var m Manifest
-		m, err = parseManifest(metadata)
-		if err != nil {
-			break
-		}
-		if m.Stage != "relay" || (strings.HasSuffix(filename, ".deb") && filepath.Base(filename) != m.File) {
-			err = errors.New("relay file does not match the manifest")
-			break
-		}
-		if filepath.Base(manifestPath) != strings.TrimSuffix(m.File, ".deb")+".manifest.json" {
-			err = errors.New("sidecar name does not match the relay file")
-			break
-		}
-		data, err = readPackage(filepath.Join(filepath.Dir(manifestPath), m.File), MaxPackage)
-		if err == nil {
-			p, err = RelayPackage(metadata, data)
-		}
+		p, err = openRelay(filename)
+
 	default:
 		err = errors.New("choose a .tar.gz, .deb or .manifest.json file")
 	}
@@ -163,6 +139,51 @@ func Open(filename string) (*Package, error) {
 		return nil, fmt.Errorf("%w: %v", ErrPackage, err)
 	}
 	return p, nil
+}
+
+// openRelay binds sidecar and Debian payload by digest. GitHub release filenames use a hyphen
+// where Debian uses a tilde; neither a picked payload nor its sidecar must keep a particular name.
+func openRelay(filename string) (*Package, error) {
+	dir := filepath.Dir(filename)
+	manifests := []string{filename}
+	var picked []byte
+	if strings.HasSuffix(filename, ".deb") {
+		var err error
+		picked, err = readPackage(filename, MaxPackage)
+		if err != nil {
+			return nil, err
+		}
+		manifests, _ = filepath.Glob(filepath.Join(dir, "*.manifest.json"))
+	}
+	for _, manifestPath := range manifests {
+		metadata, err := readPackage(manifestPath, maxMetadata)
+		if err != nil {
+			continue
+		}
+		m, err := parseManifest(metadata)
+		if err != nil || m.Stage != "relay" {
+			continue
+		}
+		if picked != nil {
+			if p, err := RelayPackage(metadata, picked); err == nil {
+				return p, nil
+			}
+			continue
+		}
+		candidates := []string{filepath.Join(dir, m.File), filepath.Join(dir, strings.ReplaceAll(m.File, "~", "-"))}
+		others, _ := filepath.Glob(filepath.Join(dir, "*.deb"))
+		candidates = append(candidates, others...)
+		for _, candidate := range candidates {
+			data, err := readPackage(candidate, MaxPackage)
+			if err != nil {
+				continue
+			}
+			if p, err := RelayPackage(metadata, data); err == nil {
+				return p, nil
+			}
+		}
+	}
+	return nil, errors.New("no relay payload and manifest with matching SHA-256")
 }
 
 func readPackage(filename string, limit int64) ([]byte, error) {

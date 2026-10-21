@@ -13,3 +13,6 @@ import "context"
 func OpenBulk(context.Context, DeviceInfo, Interface) (Bulk, error) {
 	return nil, ErrTransfersUnsupported
 }
+
+// TransfersSupported reports the backend capability without opening any device.
+func TransfersSupported() bool { return false }

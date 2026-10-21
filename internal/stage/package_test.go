@@ -245,3 +245,48 @@ func TestEarlyRelaySidecar(t *testing.T) {
 		t.Fatal("relay sidecar accepted another transport")
 	}
 }
+
+func TestRelayPickedDebMatchesDigestRegardlessOfName(t *testing.T) {
+	m := relayManifest()
+	for _, filename := range []string{strings.ReplaceAll(m.File, "~", "-"), "renamed-payload.deb"} {
+		dir := t.TempDir()
+		deb := filepath.Join(dir, filename)
+		manifest := filepath.Join(dir, "release.manifest.json")
+		if err := os.WriteFile(deb, []byte("relay deb"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(manifest, jsonBytes(t, m), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, picked := range []string{deb, manifest} {
+			p, err := Open(picked)
+			if err != nil || p.Manifest().File != m.File {
+				t.Fatalf("picked %s: %v", picked, err)
+			}
+		}
+		if err := os.WriteFile(deb, []byte("wrong digest"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Open(deb); err == nil {
+			t.Fatal("renamed payload bypassed checksum")
+		}
+	}
+}
+
+func TestReleaseDeviceFilenameMayDifferFromBundleDirectory(t *testing.T) {
+	m := deviceManifest()
+	m.Name = "openxplay-ufi003-device-0.2.0~beta.1"
+	m.Version = "0.2.0~beta.1"
+	m.ReleaseVersion = "0.2.0-beta.1"
+	for i := range m.Packages {
+		m.Packages[i].Version = m.Version
+	}
+	path := filepath.Join(t.TempDir(), "openxplay-ufi003-device-0.2.0-beta.1.tar.gz")
+	if err := os.WriteFile(path, bundleBytes(t, m, nil), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Open(path)
+	if err != nil || p.Manifest().Name != m.Name {
+		t.Fatal("release name rejected", err)
+	}
+}
