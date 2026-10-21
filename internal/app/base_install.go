@@ -484,9 +484,52 @@ func mergeBaseJob(baseJob, job stage.Job) stage.Job {
 	return job
 }
 
+type BackupPartition struct {
+	Size        int64  `json:"size"`
+	SHA256      string `json:"sha256"`
+	ShortSHA256 string `json:"shortSHA256"`
+	Source      string `json:"source"`
+}
+
+type BackupSet struct {
+	Set        string                     `json:"set"`
+	Created    time.Time                  `json:"created"`
+	Partitions map[string]BackupPartition `json:"partitions"`
+}
+
+type BackupListing struct {
+	Profile      string      `json:"profile"`
+	Serial       string      `json:"serial"`
+	Sets         []BackupSet `json:"sets"`
+	RepairSet    string      `json:"repairSet,omitempty"`
+	RepairSource string      `json:"repairSource"`
+}
+
+func (s *Service) backupListing(ctx context.Context, p profile.Profile, serial string, sets []base.Backup) (BackupListing, error) {
+	listing := BackupListing{Profile: p.ID, Serial: serial, Sets: []BackupSet{}, RepairSource: "fresh-capture"}
+	previous, err := (base.Journals{Dir: s.dataDir}).RepairSource(ctx, p.ID, serial)
+	if err != nil {
+		return listing, err
+	}
+	if previous != nil {
+		listing.RepairSource, listing.RepairSet = "previous-job", previous.RepairSet()
+	}
+	for _, b := range sets {
+		set := BackupSet{Set: b.Set, Created: b.Created, Partitions: map[string]BackupPartition{}}
+		for name, part := range b.Partitions {
+			set.Partitions[name] = BackupPartition{Size: part.Size, SHA256: part.SHA256, ShortSHA256: part.SHA256[:min(12, len(part.SHA256))], Source: part.Source}
+		}
+		listing.Sets = append(listing.Sets, set)
+	}
+	return listing, nil
+}
+
 // Backup operations require author fingerprints, but only base-generic is needed to obtain
 // them. The CLI and API never expose partition bytes through these metadata operations.
 func (s *Service) BackupOperation(ctx context.Context, operation, serial, dir string) (any, error) {
+	if operation != "list" && !base.ValidSerial(serial) {
+		return nil, &stage.Problem{Code: "bad-serial"}
+	}
 	if !s.configMu.TryLock() {
 		return nil, ErrDeviceBusy
 	}
@@ -500,9 +543,31 @@ func (s *Service) BackupOperation(ctx context.Context, operation, serial, dir st
 	store := s.baseStore(p)
 	switch operation {
 	case "list":
-		return store.List(ctx)
+		backups, err := store.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := []BackupListing{}
+		for len(backups) > 0 {
+			serial := backups[0].Serial
+			end := 1
+			for end < len(backups) && backups[end].Serial == serial {
+				end++
+			}
+			listing, err := s.backupListing(ctx, p, serial, backups[:end])
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, listing)
+			backups = backups[end:]
+		}
+		return out, nil
 	case "show":
-		return store.Show(ctx, serial)
+		sets, err := store.Sets(ctx, serial)
+		if err != nil {
+			return nil, err
+		}
+		return s.backupListing(ctx, p, serial, sets)
 	}
 	s.catalogMu.Lock()
 	defer s.catalogMu.Unlock()
@@ -515,7 +580,19 @@ func (s *Service) BackupOperation(ctx context.Context, operation, serial, dir st
 	store.Author = files.AuthorHashes()
 	switch operation {
 	case "verify":
-		return store.Validate(ctx, serial)
+		sets, err := store.Sets(ctx, serial)
+		if err != nil {
+			return nil, err
+		}
+		if len(sets) == 0 {
+			return nil, &stage.Problem{Code: "backup-invalid", Detail: serial}
+		}
+		for _, set := range sets {
+			if _, err := store.Validate(ctx, serial, set.Set); err != nil {
+				return nil, &stage.Problem{Code: "backup-restore-set", Detail: set.Set}
+			}
+		}
+		return s.backupListing(ctx, p, serial, sets)
 	case "import":
 		return store.Import(ctx, dir, serial)
 	}

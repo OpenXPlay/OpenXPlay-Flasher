@@ -271,7 +271,7 @@ func (s *Service) downloadLayer(ctx context.Context, profileID, layer, version s
 		return &stage.Problem{Code: "no-package", Detail: layer}
 	}
 	m := pkg.Manifest()
-	if m.Stage != layer || m.Device != "" && m.Device != p.ID || pkg.Info().Version != entry.Version {
+	if m.Stage != layer || m.Device != "" && m.Device != p.ID || m.Version != entry.Version {
 		return &stage.Problem{Code: "catalog-package", Detail: layer}
 	}
 	s.mu.Lock()

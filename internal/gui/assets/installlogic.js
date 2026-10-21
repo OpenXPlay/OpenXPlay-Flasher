@@ -41,7 +41,7 @@ export const ERROR_TEXT = {
   "serial-mismatch": "The board serial does not match: {detail}.",
   "stock-mismatch": "The original firmware properties do not match: {detail}.",
   "stock-location": "The stock adb serial cannot be located. Specify its USB location: {detail}.",
-  "backup-conflict": "The current modem dump differs from the existing backup. The backup was preserved; resolve the difference before continuing.",
+  "backup-restore-set": "Backup set {detail} is missing or invalid. Import a backup before continuing.",
   "backup-empty": "The modem backup contains empty calibration data: {detail}.",
   "backup-author": "The backup matches the image author or its author fingerprint is unavailable: {detail}.",
   "backup-checksum": "The backup failed its SHA-256 check: {detail}.",

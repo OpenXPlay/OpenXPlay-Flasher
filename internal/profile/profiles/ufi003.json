@@ -172,10 +172,10 @@
       }
     },
     "protected": {
-      "fsc": 1024,
-      "fsg": 1572864,
-      "modemst1": 1572864,
-      "modemst2": 1572864
+      "fsc": [1024],
+      "fsg": [1572864, 2097152],
+      "modemst1": [1572864, 2097152],
+      "modemst2": [1572864, 2097152]
     },
     "fastboot": {
       "stockProduct": "MSM8916",

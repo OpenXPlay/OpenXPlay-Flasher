@@ -4,7 +4,10 @@
 
 package profile
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestBasePinsAndValidation(t *testing.T) {
 	profiles, err := Builtin()
@@ -12,7 +15,7 @@ func TestBasePinsAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := profiles[0].Base
-	if b.Release != "openstick-v1" || b.Files["rootfs"].Size != 919755256 || b.Files["boot"].Member != "" || b.Protected["fsg"] != 1572864 || b.Fastboot.MaxPiece != 209715200 {
+	if b.Release != "openstick-v1" || b.Files["rootfs"].Size != 919755256 || b.Files["boot"].Member != "" || !slices.Equal(b.Protected["fsg"], []int64{1572864, 2097152}) || !slices.Equal(b.Protected["fsc"], []int64{1024}) || b.Fastboot.MaxPiece != 209715200 {
 		t.Fatalf("incomplete base: %+v", b)
 	}
 	for _, tc := range []struct {

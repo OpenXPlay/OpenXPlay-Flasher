@@ -160,6 +160,49 @@ func installRoutes(mux *http.ServeMux, d Deps) {
 		}
 		writeJSON(w, http.StatusOK, state)
 	})
+	mux.HandleFunc("GET /api/backups", func(w http.ResponseWriter, r *http.Request) {
+		result, err := d.Service.BackupOperation(r.Context(), "list", "", "")
+		if err != nil {
+			writeInstallError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+	mux.HandleFunc("GET /api/backups/{serial}", func(w http.ResponseWriter, r *http.Request) {
+		result, err := d.Service.BackupOperation(r.Context(), "show", r.PathValue("serial"), "")
+		if err != nil {
+			writeInstallError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+	mux.HandleFunc("POST /api/backups/import", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Dir    string `json:"dir"`
+			Serial string `json:"serial"`
+		}
+		if !readJSON(w, r, &in) {
+			return
+		}
+		result, err := d.Service.BackupOperation(r.Context(), "import", in.Serial, in.Dir)
+		if err != nil {
+			writeInstallError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+	mux.HandleFunc("POST /api/backups/{serial}/verify", func(w http.ResponseWriter, r *http.Request) {
+		var in struct{}
+		if !readJSON(w, r, &in) {
+			return
+		}
+		result, err := d.Service.BackupOperation(r.Context(), "verify", r.PathValue("serial"), "")
+		if err != nil {
+			writeInstallError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
 	mux.HandleFunc("POST /api/devices/designate-stock", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Location string `json:"location"`

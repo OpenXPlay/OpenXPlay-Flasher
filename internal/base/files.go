@@ -36,10 +36,16 @@ type Files struct {
 	Provider ArchiveProvider
 	Progress func(string, string, catalog.Progress)
 	paths    map[string]string
-	author   map[string]string
+	author   map[string]AuthorFile
 }
 
-func (f *Files) AuthorHashes() map[string]string { return maps.Clone(f.author) }
+// AuthorFile is one of the OpenStick author's own modem files inside base-generic.zip.
+type AuthorFile struct {
+	Size   int64
+	SHA256 string
+}
+
+func (f *Files) AuthorHashes() map[string]AuthorFile { return maps.Clone(f.author) }
 
 func verify(ctx context.Context, path string, size int64, sum string) error {
 	n, got, err := catalog.Hash(ctx, path)
@@ -103,7 +109,7 @@ func (f *Files) Prepare(ctx context.Context) error { return f.prepare(ctx, false
 func (f *Files) PrepareAuthor(ctx context.Context) error { return f.prepare(ctx, true) }
 
 func (f *Files) prepare(ctx context.Context, authorOnly bool) error {
-	f.paths, f.author = map[string]string{}, map[string]string{}
+	f.paths, f.author = map[string]string{}, map[string]AuthorFile{}
 	if f.Profile.Base == nil || f.Provider == nil {
 		return &stage.Problem{Code: "base-files"}
 	}
@@ -189,15 +195,15 @@ func (f *Files) prepare(ctx context.Context, authorOnly bool) error {
 					return err
 				}
 				h := sha256.New()
-				n, err := io.Copy(h, io.LimitReader(contextReader{ctx, r}, b.Protected[name]+1))
+				n, err := io.Copy(h, io.LimitReader(contextReader{ctx, r}, b.MaxProtected(name)+1))
 				r.Close()
 				if err != nil {
 					return err
 				}
-				if n != b.Protected[name] {
+				if !slices.Contains(b.Protected[name], n) {
 					return fmt.Errorf("author member %s has unexpected size", m.Member)
 				}
-				f.author[name] = hex.EncodeToString(h.Sum(nil))
+				f.author[name] = AuthorFile{Size: n, SHA256: hex.EncodeToString(h.Sum(nil))}
 			}
 			return nil
 		}()

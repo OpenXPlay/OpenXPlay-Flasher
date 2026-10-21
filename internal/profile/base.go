@@ -56,10 +56,12 @@ type Base struct {
 	Archives   map[string]Archive  `json:"archives"`
 	Files      map[string]BaseFile `json:"files"`
 	NeverWrite map[string]Member   `json:"neverWrite"`
-	Protected  map[string]int64    `json:"protected"`
-	Fastboot   BaseFastboot        `json:"fastboot"`
-	Stock      Stock               `json:"stock"`
-	Linux      Linux               `json:"linux"`
+	// Protected lists the sizes a dump of each partition may have, ascending: lk1st's oem dump
+	// returns the partition at the size the GPT in place gives it (stock and OpenStick differ).
+	Protected map[string][]int64 `json:"protected"`
+	Fastboot  BaseFastboot       `json:"fastboot"`
+	Stock     Stock              `json:"stock"`
+	Linux     Linux              `json:"linux"`
 }
 
 var baseToken = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -104,7 +106,7 @@ func (b Base) Validate() error {
 	seen := map[Member]bool{}
 	for _, name := range []string{"fsc", "fsg", "modemst1", "modemst2"} {
 		m := b.NeverWrite[name]
-		if m.Archive != "base-generic" || !cleanMember(m.Member) || path.Base(m.Member) != name+".bin" || b.Protected[name] <= 0 || b.Protected[name] > 16<<20 {
+		if m.Archive != "base-generic" || !cleanMember(m.Member) || path.Base(m.Member) != name+".bin" || !validSizes(b.Protected[name]) {
 			return bad("protected partition " + name)
 		}
 		seen[m] = true
@@ -130,4 +132,26 @@ func (b Base) Validate() error {
 	}
 	_, _, err = (USBMatch{VendorID: b.Linux.VendorID, ProductID: b.Linux.ProductID}).IDs()
 	return err
+}
+
+// validSizes: at least one size, ascending, each above zero and at most 16 MiB.
+func validSizes(sizes []int64) bool {
+	if len(sizes) == 0 {
+		return false
+	}
+	for i, n := range sizes {
+		if n <= 0 || n > 16<<20 || i > 0 && n <= sizes[i-1] {
+			return false
+		}
+	}
+	return true
+}
+
+// MaxProtected is the largest dump size the profile allows for a protected partition.
+func (b *Base) MaxProtected(name string) int64 {
+	sizes := b.Protected[name]
+	if len(sizes) == 0 {
+		return 0
+	}
+	return sizes[len(sizes)-1]
 }

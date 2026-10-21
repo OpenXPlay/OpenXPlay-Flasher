@@ -88,7 +88,7 @@ func makeFixture(t *testing.T) fixture {
 	}
 	dumps := map[string][]byte{}
 	for i, name := range partitionNames {
-		b.Protected[name] = 64
+		b.Protected[name] = []int64{64}
 		author := bytes.Repeat([]byte{byte(21 + i)}, 64)
 		bodies["base-generic"][b.NeverWrite[name].Member] = author
 		dumps[name] = bytes.Repeat([]byte{byte(91 + i)}, 64)
@@ -133,7 +133,7 @@ func (f fixture) capture(t *testing.T, serial string) Backup {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return b
+	return b.Backup
 }
 
 func TestEveryPlanSequence(t *testing.T) {
@@ -240,7 +240,7 @@ func TestExtractionPinsReuseAndNeverWrite(t *testing.T) {
 	}
 }
 
-func TestBackupValidationImportAndConflict(t *testing.T) {
+func TestBackupValidationImportAndSets(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		change func(f fixture)
@@ -269,29 +269,29 @@ func TestBackupValidationImportAndConflict(t *testing.T) {
 	f := makeFixture(t)
 	first := f.capture(t, "board1")
 	same := f.capture(t, "board1")
-	if first.Created != same.Created {
+	if first.Set != same.Set || first.Created != same.Created {
 		t.Fatal("overwrote valid backup")
 	}
 	f.dumps["fsg"][0]++
-	_, err := f.store.Capture(t.Context(), "board1", "oem-dump", func(_ context.Context, name string, w io.Writer) error { _, err := w.Write(f.dumps[name]); return err })
-	if !errors.Is(err, ErrBackupConflict) {
+	changed, err := f.store.Capture(t.Context(), "board1", "oem-dump", func(_ context.Context, name string, w io.Writer) error { _, err := w.Write(f.dumps[name]); return err })
+	if err != nil || changed.Set == first.Set || !slices.Equal(changed.Differing, []string{"fsg"}) {
 		t.Fatal(err)
 	}
-	kept, err := f.store.Validate(t.Context(), "board1")
+	kept, err := f.store.Validate(t.Context(), "board1", first.Set)
 	if err != nil || kept.Partitions["fsg"] != first.Partitions["fsg"] {
 		t.Fatal("existing backup changed", err)
 	}
-	dir, _ := f.store.path("board1")
+	dir, _ := f.store.setPath("board1", first.Set)
 	imported := &Store{Dir: t.TempDir(), Profile: f.p, Author: f.store.Author}
 	b, err := imported.Import(t.Context(), dir, "board1")
 	if err != nil || b.Partitions["fsg"].Source != "imported" {
 		t.Fatal(err)
 	}
 	put(t, filepath.Join(dir, "modemst2.bin"), bytes.Repeat([]byte{72}, 64))
-	if _, err := f.store.Validate(t.Context(), "board1"); err == nil {
+	if _, err := f.store.Validate(t.Context(), "board1", first.Set); err == nil {
 		t.Fatal("backup manifest hash ignored")
 	}
-	if _, err := imported.OpenRestore(t.Context(), "other-board", "fsg"); err == nil {
+	if _, err := imported.OpenRestore(t.Context(), "other-board", b.Set, "fsg"); err == nil {
 		t.Fatal("opened another serial's backup")
 	}
 }
@@ -322,11 +322,17 @@ type fakeFB struct {
 	dump            string
 	onWrite         func(string)
 	fail            string
+	expectRestores  map[string]Partition
+	restored        []string
 	boot            bool
 	badContext      bool
+	broken          bool
 }
 
 func (f *fakeFB) GetVar(_ context.Context, name string) (string, error) {
+	if f.broken {
+		return "", fastboot.ErrBroken
+	}
 	if name == "product" {
 		return f.product, nil
 	}
@@ -349,7 +355,7 @@ func (f *fakeFB) write(ctx context.Context, command string) error {
 	}
 	return nil
 }
-func (f *fakeFB) Flash(ctx context.Context, partition string, _ *fastboot.Image, opts fastboot.FlashOptions, _ fastboot.Progress) error {
+func (f *fakeFB) Flash(ctx context.Context, partition string, img *fastboot.Image, opts fastboot.FlashOptions, _ fastboot.Progress) error {
 	if opts.MaxPiece != 200<<20 {
 		return errors.New("wrong piece limit")
 	}
@@ -357,6 +363,14 @@ func (f *fakeFB) Flash(ctx context.Context, partition string, _ *fastboot.Image,
 		if err := opts.BeforeWrite(ctx); err != nil {
 			return err
 		}
+	}
+	if protected(partition) {
+		if pin, ok := f.expectRestores[partition]; ok {
+			if err := img.Verify(ctx, pin.Size, pin.SHA256); err != nil {
+				return fmt.Errorf("restored wrong %s: %w", partition, err)
+			}
+		}
+		f.restored = append(f.restored, partition)
 	}
 	if partition == "boot" {
 		f.boot = true
@@ -377,6 +391,9 @@ func (f *fakeFB) OEM(_ context.Context, arg string) (fastboot.Response, error) {
 func (f *fakeFB) Upload(_ context.Context, w io.Writer, _ fastboot.Progress) (int64, error) {
 	f.calls = append(f.calls, "upload")
 	n, err := w.Write(f.f.dumps[f.dump])
+	if err != nil {
+		f.broken = true
+	}
 	return int64(n), err
 }
 func (f *fakeFB) Reboot(ctx context.Context) error {
@@ -475,7 +492,7 @@ func executorFixture(t *testing.T, kind string, mode profile.Mode, product strin
 	}
 	e := NewExecutor(f.p, f.files, f.store, f.journals)
 	e.Detector = det
-	e.Open = func(context.Context, usb.DeviceInfo) (Fastboot, error) { return fb, nil }
+	e.Open = func(context.Context, usb.DeviceInfo) (Fastboot, error) { fb.broken = false; return fb, nil }
 	e.ADB = &fakeConnector{d: d}
 	e.PollInterval = time.Millisecond
 	e.FastbootTimeout = 20 * time.Millisecond
@@ -492,7 +509,7 @@ func TestExecutorEveryEntryAndJournal(t *testing.T) {
 		t.Run(tc.kind+string(tc.mode)+tc.product, func(t *testing.T) {
 			e, plan, fb, _ := executorFixture(t, tc.kind, tc.mode, tc.product)
 			job := e.Run(t.Context(), plan)
-			if job.Status != "succeeded" || !job.Observed || len(job.Findings) != 2 {
+			if job.Status != "succeeded" || !job.Observed || job.Findings["backupSet"] == "" || job.Findings["df -h /"] == "" || job.Findings["systemctl --failed --no-pager"] == "" {
 				t.Fatalf("job=%+v", job)
 			}
 			j, err := e.Journals.Load(t.Context(), e.Profile.ID, plan.Serial)
@@ -643,21 +660,21 @@ func TestReconnectChecksIdentityAndUnknownADBIsNeverOpened(t *testing.T) {
 	}
 }
 
-func TestExistingDifferentBackupStopsBeforeChain(t *testing.T) {
+func TestExistingDifferentBackupContinues(t *testing.T) {
 	e, p, fb, _ := executorFixture(t, "repair", profile.ModeFastboot, "LK1ST_MSM8916")
 	fb.f.capture(t, "board1")
 	fb.f.dumps["modemst1"][0]++
 	job := e.Run(t.Context(), p)
-	if job.Problem == nil || job.Problem.Code != "backup-conflict" || slices.Contains(fb.calls, "erase:boot") || slices.Contains(fb.calls, "flash:partition") {
-		t.Fatalf("conflict did not stop chain: %+v %v", job, fb.calls)
+	if job.Status != "succeeded" || job.Findings["backupDiffering"] != "modemst1" || !slices.Contains(fb.calls, "flash:partition") {
+		t.Fatalf("changed EFS stopped job: %+v %v", job, fb.calls)
 	}
 }
 
 func TestFSCZeroMayEqualAuthorAndUnrecognizedFastbootIDsAreAccepted(t *testing.T) {
 	f := makeFixture(t)
-	f.store.Author["fsc"] = hash(f.dumps["fsc"])
-	f.capture(t, "board1")
-	if _, err := f.store.Validate(t.Context(), "board1"); err != nil {
+	f.store.Author["fsc"] = AuthorFile{Size: int64(len(f.dumps["fsc"])), SHA256: hash(f.dumps["fsc"])}
+	b := f.capture(t, "board1")
+	if _, err := f.store.Validate(t.Context(), "board1", b.Set); err != nil {
 		t.Fatal("zero fsc exception rejected", err)
 	}
 	e, p, _, d := executorFixture(t, "system", profile.ModeFastboot, "LK1ST_MSM8916")

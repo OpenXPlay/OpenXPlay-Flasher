@@ -45,6 +45,8 @@ type Executor struct {
 	Continue        bool // The app completes the journal after the following stage executor succeeds.
 	Choice          string
 	Journal         *Journal
+	previousChain   bool
+	restoreSet      string
 	fb              Fastboot
 	candidate       *device.Candidate
 	serial          string
@@ -79,9 +81,6 @@ func problem(err error) *stage.Problem {
 	if errors.As(err, &p) {
 		return p
 	}
-	if errors.Is(err, ErrBackupConflict) {
-		return &stage.Problem{Code: "backup-conflict"}
-	}
 	return &stage.Problem{Code: "base", Detail: err.Error()}
 }
 func (e *Executor) save(ctx context.Context) error {
@@ -93,6 +92,7 @@ func (e *Executor) save(ctx context.Context) error {
 // it. Critical windows get a non-cancellable context once entered and have no automatic retry.
 func (e *Executor) Run(ctx context.Context, plan Plan) stage.Job {
 	e.serial, e.start = plan.Serial, plan.Start
+	e.previousChain, e.restoreSet = false, ""
 	e.job = stage.Job{Profile: e.Profile.ID, Serial: plan.Serial, Plan: plan.Kind, Status: "running", Started: time.Now(), Failed: -1, Steps: []stage.StepProgress{}, Findings: map[string]string{}}
 	for _, s := range Steps(plan) {
 		e.job.Steps = append(e.job.Steps, stage.StepProgress{Step: s, Status: "pending"})
@@ -119,7 +119,17 @@ func (e *Executor) Run(ctx context.Context, plan Plan) stage.Job {
 	}
 	if err == nil {
 		e.Store.Author = e.Files.AuthorHashes()
+		if plan.Kind == "repair" {
+			var previous *Journal
+			previous, err = e.Journals.RepairSource(ctx, e.Profile.ID, plan.Serial)
+			if previous != nil {
+				e.previousChain, e.restoreSet = true, previous.RepairSet()
+			}
+		}
+	}
+	if err == nil {
 		e.Journal = &Journal{Schema: JournalSchema, Profile: e.Profile.ID, Serial: plan.Serial, Plan: plan.Kind, Choice: e.Choice, Started: e.job.Started.UTC(), Completed: []string{}, CompletedAt: map[string]time.Time{}}
+		e.Journal.RestoreSet = e.restoreSet
 		err = e.save(ctx)
 	}
 	window := ""
@@ -417,10 +427,17 @@ func (e *Executor) step(ctx context.Context, s Step) error {
 	case "wait-linux":
 		return e.waitLinux(ctx)
 	case "backup":
+		if e.previousChain {
+			// Check before capturing: a missing same-second set must never be recreated with
+			// fresh post-GPT bytes under the historical source's name.
+			if err := e.validateRestore(ctx); err != nil {
+				return err
+			}
+		}
 		if err := e.fastboot(ctx, s.Product); err != nil {
 			return err
 		}
-		_, err := e.Store.Capture(ctx, e.serial, "oem-dump", func(ctx context.Context, name string, w io.Writer) error {
+		captured, err := e.Store.Capture(ctx, e.serial, "oem-dump", func(ctx context.Context, name string, w io.Writer) error {
 			if err := e.fastboot(ctx, s.Product); err != nil {
 				return err
 			}
@@ -429,11 +446,55 @@ func (e *Executor) step(ctx context.Context, s Step) error {
 				return &stage.Problem{Code: "backup-dump", Detail: name}
 			}
 			if _, err := e.fb.Upload(ctx, w, nil); err != nil {
+				var p *stage.Problem
+				if errors.As(err, &p) && p.Code == "backup-size" {
+					// A writer refusal interrupts Upload; its fastboot client cannot be reused.
+					e.closeFastboot()
+					return &stage.Problem{Code: p.Code, Detail: name}
+				}
 				return &stage.Problem{Code: "backup-dump", Detail: name}
 			}
 			return nil
 		})
-		return err
+		if err != nil {
+			var p *stage.Problem
+			invalid := errors.As(err, &p) && slices.Contains([]string{"backup-size", "backup-empty", "backup-author"}, p.Code)
+			if !e.previousChain || !invalid {
+				return err
+			}
+			e.job.Findings["backupFreshProblem"] = p.Code + ": " + p.Detail
+		} else {
+			e.Journal.CapturedSet = captured.Set
+			e.job.Findings["backupSet"] = captured.Set
+			e.job.Findings["backupComparison"] = "first / 首次备份"
+			if captured.ComparisonError {
+				e.job.Findings["backupComparison"] = "unavailable / 无法比对"
+			}
+			if captured.PreviousSet != "" {
+				e.job.Findings["backupPreviousSet"] = captured.PreviousSet
+				e.job.Findings["backupComparison"] = "matched / 相同"
+				if !captured.MatchedPrevious {
+					e.job.Findings["backupComparison"] = "different / 不同"
+					e.job.Findings["backupDiffering"] = strings.Join(captured.Differing, ", ")
+				}
+			}
+			if e.job.Plan != "system" && !e.previousChain {
+				e.restoreSet = captured.Set
+			}
+		}
+		if e.job.Plan != "system" {
+			e.Journal.RestoreSet = e.restoreSet
+			e.job.Findings["restoreSet"] = e.restoreSet
+		}
+		// Once a set is published, retain its reference even if cancellation or validation
+		// stops this job before the chain. The step remains in flight until Run completes it.
+		if err := e.save(context.WithoutCancel(ctx)); err != nil {
+			return err
+		}
+		if e.job.Plan != "system" {
+			return e.validateRestore(ctx)
+		}
+		return nil
 	case "flash", "restore", "erase":
 		return e.write(ctx, s)
 	case "reboot", "reboot-bootloader":
@@ -484,7 +545,10 @@ func (e *Executor) write(ctx context.Context, s Step) error {
 	var img *fastboot.Image
 	var err error
 	if s.Action == "restore" {
-		img, err = e.Store.OpenRestore(ctx, e.serial, s.Partition)
+		img, err = e.Store.OpenRestore(ctx, e.serial, e.restoreSet, s.Partition)
+		if err != nil && ctx.Err() == nil {
+			err = &stage.Problem{Code: "backup-restore-set", Detail: e.restoreSet}
+		}
 	} else {
 		img, err = e.Files.Open(ctx, s.FileID)
 	}
@@ -513,7 +577,7 @@ func (e *Executor) write(ctx context.Context, s Step) error {
 // preflightChain checks the entire restore set and every bootloader input before the first GPT
 // write. It is still cancellable; the critical window begins only once these checks pass.
 func (e *Executor) preflightChain(ctx context.Context, plan Plan) error {
-	if _, err := e.Store.Validate(ctx, e.serial); err != nil {
+	if err := e.validateRestore(ctx); err != nil {
 		return err
 	}
 	for _, s := range plan.Steps {
@@ -526,4 +590,14 @@ func (e *Executor) preflightChain(ctx context.Context, plan Plan) error {
 		}
 	}
 	return e.fastboot(ctx, e.Profile.Base.Fastboot.Product)
+}
+
+func (e *Executor) validateRestore(ctx context.Context) error {
+	if _, err := e.Store.Validate(ctx, e.serial, e.restoreSet); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return &stage.Problem{Code: "backup-restore-set", Detail: e.restoreSet}
+	}
+	return nil
 }

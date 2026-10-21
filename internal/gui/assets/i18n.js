@@ -14,7 +14,7 @@ export const ZH = {
   "The board serial does not match: {detail}.": "设备序列号不匹配：{detail}。",
   "The original firmware properties do not match: {detail}.": "原厂固件属性不匹配：{detail}。",
   "The stock adb serial cannot be located. Specify its USB location: {detail}.": "无法定位原厂 adb 序列号，请指定 USB 端口：{detail}。",
-  "The current modem dump differs from the existing backup. The backup was preserved; resolve the difference before continuing.": "当前调制解调器数据与现有备份不同。备份已保留，请先处理差异再继续。",
+  "Backup set {detail} is missing or invalid. Import a backup before continuing.": "备份集 {detail} 缺失或无效，请先导入备份。",
   "The modem backup contains empty calibration data: {detail}.": "调制解调器备份的校准数据为空：{detail}。",
   "The backup matches the image author or its author fingerprint is unavailable: {detail}.": "备份与镜像作者的数据相同，或缺少作者数据指纹：{detail}。",
   "The backup failed its SHA-256 check: {detail}.": "备份未通过 SHA-256 校验：{detail}。",

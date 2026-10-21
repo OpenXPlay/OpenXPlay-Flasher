@@ -164,7 +164,12 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 			}
 			return 1
 		}
-		fmt.Fprintf(stderr, "Cannot continue / 无法继续: %v\n", err)
+		var p *stage.Problem
+		if errors.As(err, &p) && p.Code == "backup-restore-set" {
+			fmt.Fprintf(stderr, "Backup set %s is missing or invalid. Import a backup before continuing. / 备份集 %s 缺失或无效，请先导入备份。\n", p.Detail, p.Detail)
+		} else {
+			fmt.Fprintf(stderr, "Cannot continue / 无法继续: %v\n", err)
+		}
 		return 1
 	}
 	fetch := func() {
@@ -438,6 +443,15 @@ func writeEngineResult(stdout, stderr io.Writer, value any, asJSON bool) int {
 		return writeJSON(stdout, stderr, value)
 	}
 	switch v := value.(type) {
+	case []app.BackupListing:
+		if len(v) == 0 {
+			fmt.Fprintln(stdout, "No backups / 没有备份")
+		}
+		for _, listing := range v {
+			printBackups(stdout, listing)
+		}
+	case app.BackupListing:
+		printBackups(stdout, v)
 	case app.CatalogState:
 		fmt.Fprintf(stdout, "Catalog / 目录 %s: %s\n", v.Channel, v.Status)
 		if v.Index != nil {
@@ -458,21 +472,30 @@ func writeEngineResult(stdout, stderr io.Writer, value any, asJSON bool) int {
 		for _, p := range v.Packages {
 			fmt.Fprintf(stdout, "%s %s: SHA-256 %s\n", p.Layer, p.Version, p.SHA256)
 		}
-	case []base.Backup:
-		if len(v) == 0 {
-			fmt.Fprintln(stdout, "No backups / 没有备份")
-		}
-		for _, b := range v {
-			fmt.Fprintf(stdout, "%s %s %s\n", b.Profile, b.Serial, b.Created.Format(time.RFC3339))
-		}
 	case base.Backup:
-		fmt.Fprintf(stdout, "Backup / 备份: %s %s %s\n", v.Profile, v.Serial, v.Created.Format(time.RFC3339))
+		fmt.Fprintf(stdout, "Backup / 备份: %s %s %s %s\n", v.Profile, v.Serial, v.Set, v.Created.UTC().Format(time.RFC3339Nano))
 		for _, name := range []string{"fsc", "fsg", "modemst1", "modemst2"} {
 			p := v.Partitions[name]
-			fmt.Fprintf(stdout, "%s: %d bytes / 字节; SHA-256 %s; %s\n", name, p.Size, p.SHA256, p.Source)
+			fmt.Fprintf(stdout, "%s: %d bytes / 字节; SHA-256 %s; %s\n", name, p.Size, p.SHA256[:min(12, len(p.SHA256))], p.Source)
 		}
 	default:
 		return writeJSON(stdout, stderr, value)
 	}
 	return 0
+}
+
+func printBackups(w io.Writer, listing app.BackupListing) {
+	fmt.Fprintf(w, "%s %s\n", listing.Profile, listing.Serial)
+	if listing.RepairSet == "" {
+		fmt.Fprintln(w, "  Repair uses the next fresh capture. / 修复将使用下次新捕获的备份。")
+	} else {
+		fmt.Fprintf(w, "  Repair backup set / 修复使用的备份集: %s\n", listing.RepairSet)
+	}
+	for _, set := range listing.Sets {
+		fmt.Fprintf(w, "  %s  %s\n", set.Set, set.Created.UTC().Format(time.RFC3339Nano))
+		for _, name := range []string{"fsc", "fsg", "modemst1", "modemst2"} {
+			p := set.Partitions[name]
+			fmt.Fprintf(w, "    %s: %d bytes / 字节  SHA-256 %s  source / 来源: %s\n", name, p.Size, p.ShortSHA256, p.Source)
+		}
+	}
 }

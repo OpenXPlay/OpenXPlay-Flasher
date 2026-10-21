@@ -166,7 +166,7 @@ func (d *baseTestDevice) Shell(_ context.Context, cmd string) (adb.Result, error
 		d.deviceVersion = "1.0"
 		out = "OXP-STAGE device ok"
 	case strings.Contains(cmd, "relay-first"), strings.Contains(cmd, "relay-install"):
-		d.relayVersion = "1.0"
+		d.relayVersion = "1.0~beta.1"
 		out = "OXP-STAGE relay ok"
 	case strings.Contains(cmd, "relay-verify"):
 		out = "active"
@@ -300,7 +300,7 @@ func baseServiceFixture(t *testing.T) (*Service, *baseTestDevice, *baseTestFB, *
 		}
 	}
 	for _, name := range []string{"fsc", "fsg", "modemst1", "modemst2"} {
-		b.Protected[name] = 64
+		b.Protected[name] = []int64{64}
 		bodies["base-generic"][b.NeverWrite[name].Member] = bytes.Repeat([]byte{44}, 64)
 	}
 	for role, entries := range bodies {
@@ -343,17 +343,17 @@ func baseServiceFixture(t *testing.T) (*Service, *baseTestDevice, *baseTestFB, *
 	gz.Close()
 	payloads[dm.Name+".tar.gz"] = bundle.Bytes()
 	relay := []byte("relay")
-	rm := stage.Manifest{Schema: stage.Schema, Stage: "relay", Name: "openxplay-relay", Version: "1.0", ReleaseVersion: "1.0", Writes: "files", Transport: "adb", Requires: stage.Requirements{Stages: []string{"base", "device"}, DebianVersion: "11", DPKGArchitecture: "arm64"}, File: "relay.deb", SHA256: testHash(relay), DeviceDir: "/var/cache/openxplay/relay", FirstInstall: "relay-first", Install: "relay-install", Verify: "relay-verify", Reboot: "none", Rollback: "rollback", Success: stage.Success{Install: "OXP-STAGE relay ok", RolledBack: "OXP-STAGE relay rolled-back"}}
+	rm := stage.Manifest{Schema: stage.Schema, Stage: "relay", Name: "openxplay-relay", Version: "1.0~beta.1", ReleaseVersion: "1.0-beta.1", Writes: "files", Transport: "adb", Requires: stage.Requirements{Stages: []string{"base", "device"}, DebianVersion: "11", DPKGArchitecture: "arm64"}, File: "relay.deb", SHA256: testHash(relay), DeviceDir: "/var/cache/openxplay/relay", FirstInstall: "relay-first", Install: "relay-install", Verify: "relay-verify", Reboot: "none", Rollback: "rollback", Success: stage.Success{Install: "OXP-STAGE relay ok", RolledBack: "OXP-STAGE relay rolled-back"}}
 	payloads["relay.deb"] = relay
 	payloads["relay.manifest.json"] = testJSON(t, rm)
 	art := func(role, name string) catalog.Artifact {
 		return catalog.Artifact{Role: role, Name: name, Size: int64(len(payloads[name])), SHA256: testHash(payloads[name]), URLs: []string{"https://fixture.invalid/" + name}}
 	}
-	layers := []catalog.Layer{{Layer: "base", Version: b.Release, Source: b.Source}, {Layer: "device", Version: "1.0", Source: "https://fixture.invalid/device", Artifacts: []catalog.Artifact{art("bundle", dm.Name+".tar.gz")}}, {Layer: "relay", Version: "1.0", Source: "https://fixture.invalid/relay", Artifacts: []catalog.Artifact{art("deb", "relay.deb"), art("manifest", "relay.manifest.json")}}}
+	layers := []catalog.Layer{{Layer: "base", Version: b.Release, Source: b.Source}, {Layer: "device", Version: "1.0", Source: "https://fixture.invalid/device", Artifacts: []catalog.Artifact{art("bundle", dm.Name+".tar.gz")}}, {Layer: "relay", Version: "1.0~beta.1", Source: "https://fixture.invalid/relay", Artifacts: []catalog.Artifact{art("deb", "relay.deb"), art("manifest", "relay.manifest.json")}}}
 	for role, pin := range b.Archives {
 		layers[0].Artifacts = append(layers[0].Artifacts, art(role, pin.File))
 	}
-	index := &catalog.Index{Schema: catalog.Schema, Channel: "beta", Sequence: 1, Generated: "2026-10-21T00:00:00Z", Devices: map[string]catalog.Device{p.ID: {Recommended: map[string]string{"base": b.Release, "device": "1.0", "relay": "1.0"}, Layers: layers}}}
+	index := &catalog.Index{Schema: catalog.Schema, Channel: "beta", Sequence: 1, Generated: "2026-10-21T00:00:00Z", Devices: map[string]catalog.Device{p.ID: {Recommended: map[string]string{"base": b.Release, "device": "1.0", "relay": "1.0~beta.1"}, Layers: layers}}}
 	if err = index.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +416,7 @@ func TestCatalogEveryLayerAndFullBaseJob(t *testing.T) {
 	wait, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	state, err := s.InstallWait(wait)
-	if err != nil || state.Job.Status != "succeeded" || state.Job.Installed.Layers["device"] != "1.0" || state.Job.Installed.Layers["relay"] != "1.0" {
+	if err != nil || state.Job.Status != "succeeded" || state.Job.Installed.Layers["device"] != "1.0" || state.Job.Installed.Layers["relay"] != "1.0~beta.1" {
 		t.Fatalf("job=%+v err=%v", state.Job, err)
 	}
 	if power.acquired != 1 || power.released != 1 || s.InstallRunning() {
@@ -509,7 +509,7 @@ func TestRepairPlusLayersIsOneExplicitJob(t *testing.T) {
 	wait, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	state, err := s.InstallWait(wait)
-	if err != nil || state.Job.Status != "succeeded" || !slices.Contains(fb.calls, "flash:partition") || state.Job.Installed.Layers["relay"] != "1.0" {
+	if err != nil || state.Job.Status != "succeeded" || !slices.Contains(fb.calls, "flash:partition") || state.Job.Installed.Layers["relay"] != "1.0~beta.1" {
 		t.Fatalf("repair plus layers: %+v %v", state.Job, err)
 	}
 	j, err := (base.Journals{Dir: s.dataDir}).Load(ctx, "ufi003", "board1")
@@ -628,5 +628,71 @@ func TestReadOnlyFastbootFactsAndResumeOffer(t *testing.T) {
 	state = s.Install(t.Context())
 	if slices.ContainsFunc(state.Choices, func(c stage.Choice) bool { return c.ID == "repair" }) {
 		t.Fatal("completed Linux job offered resume")
+	}
+}
+
+func TestBackupOperationImportsAndListsSets(t *testing.T) {
+	s, d, fb, source, _ := baseServiceFixture(t)
+	if _, err := s.CatalogFetch(t.Context(), "beta"); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	for i, name := range []string{"fsc", "fsg", "modemst1", "modemst2"} {
+		testPut(t, filepath.Join(dir, name+".bin"), bytes.Repeat([]byte{byte(70 + i)}, 64))
+	}
+	var imported []base.Backup
+	for range 2 {
+		result, err := s.BackupOperation(t.Context(), "import", "board1", dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := result.(base.Backup)
+		if b.Set == "" || b.Partitions["modemst1"].Source != "imported" {
+			t.Fatal("import lost set or provenance", b)
+		}
+		imported = append(imported, b)
+	}
+	if imported[0].Set == imported[1].Set {
+		t.Fatal("identical imports must add separate sets")
+	}
+	j := base.Journal{Schema: base.JournalSchema, Profile: "ufi003", Serial: "board1", Plan: "stock", Started: time.Now().Add(-time.Hour), Updated: time.Now(), CapturedSet: imported[0].Set, InFlight: "chain-rpm"}
+	if err := (base.Journals{Dir: s.dataDir}).Save(t.Context(), j); err != nil {
+		t.Fatal(err)
+	}
+	// A newer pre-chain attempt cannot change the pending repair's source.
+	j.Started = j.Started.Add(time.Minute)
+	j.InFlight, j.CapturedSet = "backup", imported[1].Set
+	if err := (base.Journals{Dir: s.dataDir}).Save(t.Context(), j); err != nil {
+		t.Fatal(err)
+	}
+	source.err = errors.New("offline")
+	for _, operation := range []string{"list", "show", "verify"} {
+		result, err := s.BackupOperation(t.Context(), operation, "board1", "")
+		if err != nil {
+			t.Fatal(operation, err)
+		}
+		var listing BackupListing
+		if operation == "list" {
+			all := result.([]BackupListing)
+			if len(all) != 1 {
+				t.Fatal("expected one serial", all)
+			}
+			listing = all[0]
+		} else {
+			listing = result.(BackupListing)
+		}
+		if listing.RepairSet != imported[0].Set || listing.RepairSource != "previous-job" || len(listing.Sets) != 2 || listing.Sets[0].Set != imported[1].Set {
+			t.Fatal("wrong listing or repair source", listing)
+		}
+		for _, set := range listing.Sets {
+			for _, part := range set.Partitions {
+				if part.Size != 64 || len(part.ShortSHA256) != 12 || part.ShortSHA256 != part.SHA256[:12] || part.Source != "imported" {
+					t.Fatal("incomplete partition summary", part)
+				}
+			}
+		}
+	}
+	if len(fb.calls) != 0 || len(d.opened) != 0 {
+		t.Fatal("backup metadata and imports accessed a device")
 	}
 }
