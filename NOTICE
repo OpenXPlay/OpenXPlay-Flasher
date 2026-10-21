@@ -1,0 +1,40 @@
+OpenXPlay Flasher Notices
+
+OpenXPlay Flasher
+Copyright (c) 2026 OpenXPlay.org and contributors.
+
+This project is licensed under the GNU Affero General Public License v3.0 only
+(AGPL-3.0-only). See LICENSE for the full license terms.
+
+==== Additional Terms under AGPLv3 Section 7 ====
+
+Pursuant to Section 7(b) of the GNU Affero General Public License version 3, the
+following reasonable legal notice and author attribution must be preserved by
+modified versions of OpenXPlay-owned material contributed to OpenXPlay Flasher,
+in the Appropriate Legal Notices and in any prominent about, legal, footer,
+or attribution location presented by the user interface:
+
+"Powered by OpenXPlay."
+
+Modified versions that present a user interface must also preserve a visible
+link to the original project in a prominent about, legal, footer, or
+attribution location:
+
+https://github.com/OpenXPlay/OpenXPlay-Flasher
+
+Modified versions must not misrepresent the origin of the software and must
+mark their changes in accordance with AGPLv3 Section 7(c).
+
+==== Exemptions ====
+
+Organisations that cannot use AGPLv3 may contact support@openxplay.org to
+request an exemption.
+
+==== Third-party Components ====
+
+The application and its build structure follow magpie
+(https://github.com/yetone/magpie), Copyright (c) 2026 yetone, licensed under
+the MIT License. Third-party dependencies and their licences are listed in
+THIRD-PARTY-LICENSES.md.
+
+==== End of Notices ====

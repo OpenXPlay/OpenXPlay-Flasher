@@ -1,0 +1,56 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: 2026 OpenXPlay.org
+SPDX-License-Identifier: AGPL-3.0-only
+Created by riko chen on 2026-10-20
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenXPlay Flasher</title>
+  <script src="/boot.js"></script>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="top">
+    <img class="logo" src="/logo.png" alt="" width="40" height="40">
+    <div class="title">
+      <h1 data-t="OpenXPlay Flasher">OpenXPlay Flasher</h1>
+      <p class="sub" data-t="Install the OpenXPlay relay on supported devices, from scratch or one layer at a time.">Install the OpenXPlay relay on supported devices, from scratch or one layer at a time.</p>
+    </div>
+    <div class="lang" role="group" aria-label="Language">
+      <button type="button" data-lang="zh-CN">中文</button>
+      <button type="button" data-lang="en">English</button>
+    </div>
+  </header>
+
+  <div class="preview" role="note" data-t="Development preview: this version only detects devices and never writes to them.">Development preview: this version only detects devices and never writes to them.</div>
+
+  <ol class="steps" aria-label="Steps">
+    <li class="current" data-t="Connect">Connect</li>
+    <li data-t="Choose">Choose</li>
+    <li data-t="Prepare">Prepare</li>
+    <li data-t="Back up">Back up</li>
+    <li data-t="Flash">Flash</li>
+    <li data-t="Done">Done</li>
+  </ol>
+
+  <main>
+    <section class="card" aria-live="polite">
+      <h2 data-t="Connect your device">Connect your device</h2>
+      <div id="devices" class="devices"></div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span id="version"></span>
+    <span class="sep">·</span>
+    <span id="license"></span>
+    <span class="sep">·</span>
+    <a href="https://github.com/OpenXPlay/OpenXPlay-Flasher" data-open>Powered by OpenXPlay.</a>
+  </footer>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

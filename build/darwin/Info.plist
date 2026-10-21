@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+SPDX-FileCopyrightText: 2026 OpenXPlay.org
+SPDX-License-Identifier: AGPL-3.0-only
+Created by riko chen on 2026-10-20
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>OpenXPlay Flasher</string>
+	<key>CFBundleDisplayName</key>
+	<string>OpenXPlay Flasher</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.openxplay.flasher</string>
+	<key>CFBundleExecutable</key>
+	<string>openxplay-flasher</string>
+	<key>CFBundleIconFile</key>
+	<string>openxplay-flasher</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+	</array>
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 OpenXPlay.org · AGPL-3.0-only</string>
+</dict>
+</plist>

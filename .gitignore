@@ -1,0 +1,6 @@
+.DS_Store
+/openxplay-flasher
+/openxplay-flasher.exe
+/dist/
+rsrc_windows_*.syso
+node_modules/

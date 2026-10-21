@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: AGPL-3.0-only
+# Created by riko chen on 2026-10-20
+
+# Copyright and licensing for files that cannot carry a header (REUSE 3.3). Every other file carries
+# its own SPDX header.
+version = 1
+
+[[annotations]]
+path = [
+    ".gitignore",
+    "CLA.md",
+    "NOTICE",
+    "README.md",
+    "README-zh.md",
+    "THIRD-PARTY-LICENSES.md",
+    "go.mod",
+    "go.sum",
+    "build/windows/winres.json",
+    "internal/profile/profiles/*.json",
+]
+SPDX-FileCopyrightText = "2026 OpenXPlay.org"
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+# The OpenXPlay logo and the icons generated from it.
+[[annotations]]
+path = [
+    "build/icon/openxplay.png",
+    "build/darwin/openxplay-flasher.icns",
+    "build/windows/icon-*.png",
+    "internal/gui/icon.png",
+    "internal/gui/assets/logo.png",
+]
+SPDX-FileCopyrightText = "2026 OpenXPlay.org"
+SPDX-License-Identifier = "AGPL-3.0-only"

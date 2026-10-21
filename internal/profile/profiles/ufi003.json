@@ -1,0 +1,30 @@
+{
+  "id": "ufi003",
+  "name": { "en": "UFI003 4G USB dongle", "zh-CN": "UFI003 随身 Wi-Fi" },
+  "family": "openstick-msm8916",
+  "usb": [
+    { "mode": "adb", "vendorId": "18d1", "productId": "d001" },
+    { "mode": "fastboot", "vendorId": "18d1", "productId": "d00d" },
+    { "mode": "edl", "vendorId": "05c6", "productId": "9008" }
+  ],
+  "layers": [
+    {
+      "id": "base",
+      "name": { "en": "Base system (OpenStick Debian 11)", "zh-CN": "基础系统（OpenStick Debian 11）" },
+      "transport": "fastboot",
+      "destructive": true
+    },
+    {
+      "id": "device",
+      "name": { "en": "Device support", "zh-CN": "设备支持" },
+      "transport": "adb",
+      "destructive": false
+    },
+    {
+      "id": "relay",
+      "name": { "en": "OpenXPlay relay", "zh-CN": "OpenXPlay 中继" },
+      "transport": "adb",
+      "destructive": false
+    }
+  ]
+}
