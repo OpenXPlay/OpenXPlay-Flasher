@@ -25,6 +25,15 @@ import (
 //go:embed icon.png
 var appIcon []byte
 
+// runtimeIcon is the icon handed to Wails: none on macOS, where the bundle's .icns (drawn on
+// Apple's icon grid) is the Dock icon and a runtime icon would replace it at full bleed.
+func runtimeIcon() []byte {
+	if runtime.GOOS == "darwin" {
+		return nil
+	}
+	return appIcon
+}
+
 // host is the Wails application: it owns the window and implements Native.
 type host struct {
 	app *application.App
@@ -74,7 +83,7 @@ func Run() error {
 	h.app = application.New(application.Options{
 		Name:        version.Name,
 		Description: "Installs and updates the OpenXPlay relay on a USB dongle",
-		Icon:        appIcon,
+		Icon:        runtimeIcon(),
 		Assets: application.AssetOptions{Handler: Handler(Deps{
 			Service:    svc,
 			Hub:        hub,

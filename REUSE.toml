@@ -22,10 +22,12 @@ path = [
 SPDX-FileCopyrightText = "2026 OpenXPlay.org"
 SPDX-License-Identifier = "AGPL-3.0-only"
 
-# The OpenXPlay logo and the icons generated from it.
+# The app icon: artwork made for OpenXPlay with Codex image generation, and the icons made from it.
 [[annotations]]
 path = [
-    "build/icon/openxplay.png",
+    "build/icon/flasher-art.png",
+    "build/icon/flasher-macos.png",
+    "build/icon/flasher.png",
     "build/darwin/openxplay-flasher.icns",
     "build/windows/icon-*.png",
     "internal/gui/icon.png",

@@ -124,20 +124,23 @@ checksums:
 	test -n "$$files" || { echo "no release files in dist/"; exit 1; }; \
 	shasum -a 256 $$files > SHA256SUMS && cat SHA256SUMS
 
-# Regenerates the committed icons from build/icon/openxplay.png (macOS: sips and iconutil).
+# Regenerates the committed icons from build/icon/flasher-art.png, the full-bleed artwork: the
+# squircle masters (macOS with Apple's 100 px grid margin, and full size for Windows and the page),
+# then every size from them (macOS: sips and iconutil).
 icons:
+	@go run build/icon/mask.go -in build/icon/flasher-art.png -out build/icon/flasher-macos.png -margin 100
+	@go run build/icon/mask.go -in build/icon/flasher-art.png -out build/icon/flasher.png
 	@rm -rf build/darwin/$(BIN).iconset && mkdir -p build/darwin/$(BIN).iconset
-	@for s in 16 32 128 256 512; do \
-		sips -z $$s $$s build/icon/openxplay.png --out build/darwin/$(BIN).iconset/icon_$${s}x$${s}.png >/dev/null; \
-		if [ $$s -lt 512 ]; then d=$$((s*2)); \
-			sips -z $$d $$d build/icon/openxplay.png --out build/darwin/$(BIN).iconset/icon_$${s}x$${s}@2x.png >/dev/null; fi; \
+	@for s in 16 32 128 256 512; do d=$$((s*2)); \
+		sips -z $$s $$s build/icon/flasher-macos.png --out build/darwin/$(BIN).iconset/icon_$${s}x$${s}.png >/dev/null; \
+		sips -z $$d $$d build/icon/flasher-macos.png --out build/darwin/$(BIN).iconset/icon_$${s}x$${s}@2x.png >/dev/null; \
 	done
 	@iconutil -c icns build/darwin/$(BIN).iconset -o build/darwin/$(BIN).icns && rm -rf build/darwin/$(BIN).iconset
 	@for s in 16 32 48 64 128 256; do \
-		sips -z $$s $$s build/icon/openxplay.png --out build/windows/icon-$$s.png >/dev/null; \
+		sips -z $$s $$s build/icon/flasher.png --out build/windows/icon-$$s.png >/dev/null; \
 	done
-	@sips -z 128 128 build/icon/openxplay.png --out internal/gui/assets/logo.png >/dev/null
-	@sips -z 256 256 build/icon/openxplay.png --out internal/gui/icon.png >/dev/null
+	@sips -z 128 128 build/icon/flasher.png --out internal/gui/assets/logo.png >/dev/null
+	@sips -z 256 256 build/icon/flasher.png --out internal/gui/icon.png >/dev/null
 
 clean:
 	rm -rf $(BIN) dist rsrc_windows_*.syso
