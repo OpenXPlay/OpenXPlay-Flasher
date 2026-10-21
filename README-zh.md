@@ -12,6 +12,19 @@
 
 设备配置位于 [`internal/profile/profiles`](./internal/profile/profiles)。
 
+## 打开应用
+
+从 [Releases](https://github.com/OpenXPlay/OpenXPlay-Flasher/releases) 下载对应系统的版本，并用其中的 `SHA256SUMS` 核对文件的 SHA-256。安装包没有使用 Apple 或 Microsoft 证书签名，所以首次打开时系统会先询问。
+
+**macOS 12 或更高版本**（`OpenXPlay-Flasher-<版本>-macos-universal.dmg`）：把应用拖进“应用程序”文件夹，然后打开一次。
+
+- macOS 15 或更高版本：出现“未打开”提示时选择“完成”，打开“系统设置 > 隐私与安全性”，在关于 OpenXPlay Flasher 的提示旁选择**仍要打开**。
+- macOS 12 至 14：按住 Control 键点按应用，选择“打开”，再选择“打开”。
+- 也可以在“终端”中移除隔离标记：
+  `xattr -dr com.apple.quarantine "/Applications/OpenXPlay Flasher.app"`
+
+**Windows 10 或 11**（`openxplay-flasher-windows-amd64.exe`；Arm 电脑使用 `-arm64.exe`）：出现“Windows 已保护你的电脑”时，选择**更多信息**，再选择**仍要运行**。如果应用提示缺少 Microsoft Edge WebView2 运行时，请安装后重新打开应用。
+
 ## 构建
 
 需要 Go 1.26 或更高版本；macOS 上还需要 Xcode 命令行工具、pkg-config，以及供 `make build` 和测试使用的 libusb（`brew install libusb pkg-config`）；运行界面测试需要 Node.js 22。`make app` 会自行构建适用于 macOS 12 及以上的通用 libusb（只需下载一次），并用 Go 1.26（可在 macOS 12 上运行的最后一个 Go 版本）构建应用。

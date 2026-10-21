@@ -16,6 +16,25 @@ is usually only the relay.
 
 Device profiles live in [`internal/profile/profiles`](./internal/profile/profiles).
 
+## Open the app
+
+Download the build for your system from [Releases](https://github.com/OpenXPlay/OpenXPlay-Flasher/releases)
+and compare its SHA-256 with `SHA256SUMS` there. The builds are not signed with an Apple or
+Microsoft certificate, so the system asks before the first start.
+
+**macOS 12 or later** (`OpenXPlay-Flasher-<version>-macos-universal.dmg`): drag the app into
+Applications, then open it once.
+
+- macOS 15 or later: when the "not opened" message appears, choose Done, open System Settings >
+  Privacy & Security, and choose **Open Anyway** next to the message about OpenXPlay Flasher.
+- macOS 12 to 14: Control-click the app, choose Open, then Open again.
+- Or remove the quarantine flag in Terminal:
+  `xattr -dr com.apple.quarantine "/Applications/OpenXPlay Flasher.app"`
+
+**Windows 10 or 11** (`openxplay-flasher-windows-amd64.exe`, or `-arm64.exe` for Arm PCs): when
+"Windows protected your PC" appears, choose **More info**, then **Run anyway**. If the app reports
+that the Microsoft Edge WebView2 Runtime is missing, install it and start the app again.
+
 ## Build
 
 Requirements: Go 1.26 or later; on macOS the Xcode command line tools, pkg-config and, for
