@@ -7,6 +7,7 @@ package stage
 import (
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
 )
@@ -42,15 +43,18 @@ type ChoiceDefinition struct {
 }
 
 type ArtifactNeed struct {
-	Role     string   `json:"role"`
-	Name     string   `json:"name"`
-	Size     int64    `json:"size"`
-	SHA256   string   `json:"sha256"`
-	Source   string   `json:"source"`
-	Done     int64    `json:"done"`
-	Total    int64    `json:"total"`
-	Verified bool     `json:"verified"`
-	Error    *Problem `json:"error,omitempty"`
+	Status         string    `json:"status"`
+	BytesPerSecond float64   `json:"bytesPerSecond"`
+	Updated        time.Time `json:"updated,omitempty"`
+	Role           string    `json:"role"`
+	Name           string    `json:"name"`
+	Size           int64     `json:"size"`
+	SHA256         string    `json:"sha256"`
+	Source         string    `json:"source"`
+	Done           int64     `json:"done"`
+	Total          int64     `json:"total"`
+	Verified       bool      `json:"verified"`
+	Error          *Problem  `json:"error,omitempty"`
 }
 
 type PackageNeed struct {

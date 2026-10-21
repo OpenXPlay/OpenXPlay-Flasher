@@ -26,6 +26,8 @@ type StepProgress struct {
 // Job is an immutable snapshot sent to the shells after each change. Installed is the last read
 // of dpkg; Observed says whether that read describes the device after this job finished.
 type Job struct {
+	Retryable bool              `json:"retryable"`
+	Transfer  *TransferProgress `json:"transfer,omitempty"`
 	Profile   string            `json:"profile,omitempty"`
 	Serial    string            `json:"serial,omitempty"`
 	Plan      string            `json:"plan,omitempty"`
@@ -44,6 +46,15 @@ type Job struct {
 	Pending   []string          `json:"pending,omitempty"`
 	Uncertain string            `json:"uncertain,omitempty"`
 	Findings  map[string]string `json:"findings,omitempty"`
+}
+
+type TransferProgress struct {
+	Phase           string `json:"phase"`
+	Piece           int    `json:"piece"`
+	Pieces          int    `json:"pieces"`
+	Done            int64  `json:"done"`
+	Total           int64  `json:"total"`
+	EstimateSeconds int64  `json:"estimateSeconds,omitempty"`
 }
 
 // Executor's connection and guard come from the service's fresh one-device scans. It never owns
@@ -249,6 +260,17 @@ func (e *Executor) Run(ctx context.Context, plan Plan) Job {
 		e.job.Status, e.job.Left = "succeeded", "installed"
 	}
 	e.job.Finished = e.Now()
+	if e.job.Status == "failed" && e.job.Observed && e.job.Failed >= 0 && e.job.Failed < len(e.job.Steps) {
+		step := e.job.Steps[e.job.Failed]
+		// Only verification can be resumed directly. A write, reboot or uncertain install
+		// always goes back through a complete plan (or the base engine's Repair procedure).
+		e.job.Retryable = !step.Critical && step.Resumable && (step.Action == "verify" || step.Action == "installed")
+		for _, pkg := range e.Packages {
+			if e.job.Installed.Layers[pkg.manifest.Stage] != pkg.manifest.Version {
+				e.job.Retryable = false
+			}
+		}
+	}
 	e.publish()
 	return e.job
 }

@@ -86,10 +86,12 @@ func (s *Service) CatalogFetch(ctx context.Context, channel string) (CatalogStat
 	}
 	s.catalogState = CatalogState{Status: "fetching", Channel: channel}
 	s.mu.Unlock()
+	s.emitInstall()
 	if source == nil {
 		s.mu.Lock()
 		s.catalogState = CatalogState{Status: "failed", Channel: channel, Reason: "catalog source unavailable / 目录来源不可用"}
 		s.mu.Unlock()
+		s.emitInstall()
 		return s.CatalogSnapshot(), &stage.Problem{Code: "catalog-unavailable"}
 	}
 	i, err := source.Fetch(ctx, channel)
@@ -168,8 +170,24 @@ func (s *Service) artifactUpdate(layer string, a catalog.Artifact, source string
 	if old, ok := s.artifacts[artifactKey(layer, a.Role)]; ok && old.SHA256 == a.SHA256 && old.Source == "imported" && source == "catalog" && p.URL == "" {
 		source = "imported"
 	}
-	n := stage.ArtifactNeed{Role: a.Role, Name: a.Name, Size: a.Size, SHA256: a.SHA256, Source: source, Done: p.Done, Total: a.Size, Verified: err == nil && p.Done == a.Size && p.URL == ""}
+	old := s.artifacts[artifactKey(layer, a.Role)]
+	now := time.Now().UTC()
+	n := stage.ArtifactNeed{Role: a.Role, Name: a.Name, Size: a.Size, SHA256: a.SHA256, Source: source, Done: p.Done, Total: a.Size, Verified: err == nil && p.Done == a.Size && p.URL == "", Updated: now, Status: "downloading"}
+	n.BytesPerSecond = old.BytesPerSecond
+	if seconds := now.Sub(old.Updated).Seconds(); seconds >= 0.1 && seconds < 30 && p.Done > old.Done {
+		n.BytesPerSecond = float64(p.Done-old.Done) / seconds
+	} else if p.Done < old.Done {
+		n.BytesPerSecond = 0
+	}
+	if n.Verified {
+		n.Status = "verified"
+		if old.Status != "downloading" && source == "catalog" {
+			n.Status = "cached"
+		}
+	}
 	if err != nil {
+		n.Status = "failed"
+		n.Done = old.Done
 		n.Error = &stage.Problem{Code: "download", Detail: err.Error()}
 	}
 	s.artifacts[artifactKey(layer, a.Role)] = n
@@ -216,6 +234,7 @@ func (s *Service) downloadLayer(ctx context.Context, profileID, layer, version s
 		}
 		roles := mapKeys(p.Base.Archives)
 		slices.Sort(roles)
+		var failures []error
 		for _, role := range roles {
 			pin := p.Base.Archives[role]
 			a := catalog.Artifact{Role: role, Name: pin.File, Size: pin.Size, SHA256: pin.SHA256}
@@ -223,22 +242,27 @@ func (s *Service) downloadLayer(ctx context.Context, profileID, layer, version s
 			_ = path
 			s.artifactUpdate(layer, a, source, catalog.Progress{Done: pin.Size, Total: pin.Size}, err)
 			if err != nil {
-				return err
+				failures = append(failures, err)
 			}
 		}
-		return nil
+		return errors.Join(failures...)
 	}
 	if entry == nil || cache == nil {
 		return &stage.Problem{Code: "catalog-unavailable", Detail: layer}
 	}
 	paths := map[string]string{}
+	var failures []error
 	for _, a := range entry.Artifacts {
 		path, err := cache.Ensure(ctx, a, func(p catalog.Progress) { s.artifactUpdate(layer, a, "catalog", p, nil) })
 		s.artifactUpdate(layer, a, "catalog", catalog.Progress{Done: a.Size, Total: a.Size}, err)
 		if err != nil {
-			return err
+			failures = append(failures, err)
+			continue
 		}
 		paths[a.Role] = path
+	}
+	if len(failures) > 0 {
+		return errors.Join(failures...)
 	}
 	var pkg *stage.Package
 	var err error
@@ -399,5 +423,67 @@ func (s *Service) recordLocalPackageLocked(pkg *stage.Package) {
 	if name == "" {
 		name = m.Name + ".tar.gz"
 	}
-	s.artifacts[artifactKey(m.Stage, "local")] = stage.ArtifactNeed{Role: "local", Name: name, Size: info.Size, SHA256: info.SHA256, Source: "local", Done: info.Size, Total: info.Size, Verified: true}
+	s.artifacts[artifactKey(m.Stage, "local")] = stage.ArtifactNeed{Status: "verified", Role: "local", Name: name, Size: info.Size, SHA256: info.SHA256, Source: "local", Done: info.Size, Total: info.Size, Verified: true}
+}
+
+// ImportArtifact matches the selected row's exact bytes, independently of its local filename.
+// The local package fallback is deliberately a separate API.
+func (s *Service) ImportArtifact(ctx context.Context, layer, role, path string) (InstallState, error) {
+	if !s.configMu.TryLock() {
+		return s.InstallSnapshot(), ErrDeviceBusy
+	}
+	defer s.configMu.Unlock()
+	a, err := s.selectedArtifact(layer, role)
+	if err != nil {
+		return s.InstallSnapshot(), err
+	}
+	n, sum, err := catalog.Hash(ctx, path)
+	if err != nil {
+		return s.InstallSnapshot(), err
+	}
+	if n != a.Size || sum != a.SHA256 {
+		return s.InstallSnapshot(), &stage.Problem{Code: "artifact-mismatch", Detail: a.Name}
+	}
+	err = s.importFile(ctx, path)
+	return s.emitInstall(), err
+}
+func (s *Service) selectedArtifact(layer, role string) (stage.ArtifactNeed, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.installTarget == nil {
+		return stage.ArtifactNeed{}, ErrNoDevice
+	}
+	for _, p := range s.profiles {
+		if p.ID != s.installTarget.Profile {
+			continue
+		}
+		for _, a := range s.artifactNeedsLocked(p, layer) {
+			if a.Role == role {
+				return a, nil
+			}
+		}
+	}
+	return stage.ArtifactNeed{}, &stage.Problem{Code: "wrong-layer", Detail: layer}
+}
+func (s *Service) RetryArtifact(ctx context.Context, layer, role string) (InstallState, error) {
+	if _, err := s.selectedArtifact(layer, role); err != nil {
+		return s.InstallSnapshot(), err
+	}
+	s.mu.Lock()
+	profileID := s.installTarget.Profile
+	s.mu.Unlock()
+	return s.DownloadLayer(ctx, profileID, layer, "")
+}
+
+func (s *Service) BackupFolder(ctx context.Context, serial string) (string, error) {
+	listing, err := s.BackupOperation(ctx, "show", serial, "")
+	if err != nil {
+		return "", err
+	}
+	folder := listing.(BackupListing).Folder
+	st, err := os.Stat(folder)
+	if err != nil || !st.IsDir() {
+		return "", &stage.Problem{Code: "backup-folder"}
+	}
+	return folder, nil
 }

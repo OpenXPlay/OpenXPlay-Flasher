@@ -38,6 +38,11 @@ func (f *fakeNative) OpenFile() (string, []byte, error) { return "", nil, errNoD
 
 func (f *fakeNative) OpenPackages(string) ([]string, error) { return nil, errNoDialogs }
 
+func (f *fakeNative) OpenIdentity() ([]string, error)   { return nil, errNoDialogs }
+func (f *fakeNative) OpenArtifact() (string, error)     { return "", errNoDialogs }
+func (f *fakeNative) OpenBackupFolder() (string, error) { return "", errNoDialogs }
+func (f *fakeNative) ShowFolder(path string) error      { f.opened = append(f.opened, path); return nil }
+
 type fixture struct {
 	handler  http.Handler
 	hub      *Hub

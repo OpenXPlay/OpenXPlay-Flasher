@@ -44,7 +44,7 @@ func TestCloseGuardOnlyArmedWhileRunning(t *testing.T) {
 func TestQuitWarningsHaveBothLanguages(t *testing.T) {
 	for _, lang := range []string{LangEnglish, LangChinese} {
 		s := quitStrings(lang)
-		if s.Warning == "" || s.Keep == "" || s.Quit == "" || s.Keep == s.Quit {
+		if s.Warning == "" || s.Critical == "" || s.Critical == s.Warning || s.Keep == "" || s.Quit == "" || s.Keep == s.Quit {
 			t.Fatalf("%s: %+v", lang, s)
 		}
 	}

@@ -38,6 +38,10 @@ type Native interface {
 	OpenFile() (name string, data []byte, err error)
 	// OpenPackages filters the picker to the selected layer without reading the payloads.
 	OpenPackages(layer string) ([]string, error)
+	OpenIdentity() ([]string, error)
+	OpenBackupFolder() (string, error)
+	OpenArtifact() (string, error)
+	ShowFolder(path string) error
 }
 
 // errNoDialogs: browser mode has no native dialogs; the page uses the browser's own.
@@ -146,7 +150,8 @@ func Handler(d Deps) http.Handler {
 		if !readJSON(w, r, &in) {
 			return
 		}
-		if !canOpen(in.URL) {
+		forward := d.Service.ForwardStatus()
+		if !canOpen(in.URL) && !(forward.Active && in.URL == forward.Address) {
 			writeError(w, http.StatusForbidden, "url_not_allowed", "this address cannot be opened")
 			return
 		}
@@ -159,6 +164,7 @@ func Handler(d Deps) http.Handler {
 
 	configRoutes(mux, d)
 	installRoutes(mux, d)
+	guidedRoutes(mux, d)
 	mux.Handle("/", staticHandler())
 	return mux
 }

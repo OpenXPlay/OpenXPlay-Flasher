@@ -159,6 +159,7 @@ func (e *Executor) Run(ctx context.Context, plan Plan) stage.Job {
 		}
 		e.attempted = false
 		e.job.Steps[i].Status = "running"
+		e.job.Transfer = nil
 		e.Journal.InFlight = s.ID
 		e.publish()
 		if err = e.save(stepCtx); err == nil {
@@ -560,6 +561,30 @@ func (e *Executor) write(ctx context.Context, s Step) error {
 	if err = e.fastboot(ctx, s.Product); err != nil {
 		return err
 	}
+	var began, published time.Time
+	var piece int
+	progress := func(event fastboot.Event) {
+		now := time.Now()
+		if piece != event.Piece {
+			piece = event.Piece
+			began = now
+		}
+		if began.IsZero() {
+			began = now
+		}
+		if e.job.Transfer == nil || e.job.Transfer.Phase != event.Phase || event.Done == event.Total || now.Sub(published) >= 100*time.Millisecond {
+			t := &stage.TransferProgress{Phase: event.Phase, Piece: event.Piece, Pieces: event.Pieces, Done: event.Done, Total: event.Total}
+			if seconds := now.Sub(began).Seconds(); event.Phase == "sending" && seconds >= 3 && event.Done > 0 {
+				t.EstimateSeconds = int64(float64(event.Total-event.Done) / (float64(event.Done) / seconds))
+			}
+			e.job.Transfer = t
+			published = now
+			e.publish()
+		}
+		if e.Progress != nil {
+			e.Progress(event)
+		}
+	}
 	return e.fb.Flash(ctx, s.Partition, img, fastboot.FlashOptions{MaxPiece: e.Profile.Base.Fastboot.MaxPiece, BeforeWrite: func(ctx context.Context) error {
 		c, err := OneCandidate(e.Detector.Scan(ctx), profile.ModeFastboot)
 		if err != nil {
@@ -571,7 +596,7 @@ func (e *Executor) write(ctx context.Context, s Step) error {
 		e.attempted = true
 		e.job.Observed = false
 		return nil
-	}}, e.Progress)
+	}}, progress)
 }
 
 // preflightChain checks the entire restore set and every bootloader input before the first GPT

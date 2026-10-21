@@ -38,7 +38,7 @@ type ConfigTarget struct {
 func (s *Service) SetADB(c adb.Connector) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.adb = c
+	s.adb = adb.Share(c)
 }
 
 // ConfigTarget picks the one supported device that runs Linux with adb.

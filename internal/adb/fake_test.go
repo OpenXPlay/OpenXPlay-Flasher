@@ -80,6 +80,8 @@ func (d *fakeDevice) serve(rw io.ReadWriteCloser, name string) {
 		d.shellLegacy(rw, strings.TrimPrefix(name, "shell:"))
 	case name == "sync:":
 		d.sync(rw)
+	case name == "tcp:6975":
+		_, _ = io.Copy(rw, rw)
 	}
 }
 

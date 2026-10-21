@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { ZH, t, setLang } from "../assets/i18n.js";
 
 const read = (name) => readFileSync(new URL("../assets/" + name, import.meta.url), "utf8");
@@ -13,6 +14,13 @@ const scripts = ["app.js", "devices.js", "config.js", "configlogic.js", "install
 const nativeText = readFileSync(new URL("../text.go", import.meta.url), "utf8");
 // Native menus keep their own strings; the new labels must match the page's translations.
 const nativeEnglish = nativeText.slice(nativeText.lastIndexOf("return menuText{"));
+
+test("every browser module parses as an ES module", () => {
+  for (const file of ["app.js", "devices.js", "install.js", "installlogic.js", "i18n.js", "ui.js", "config.js", "configlogic.js", "settings.js", "settingslogic.js"]) {
+    const result = spawnSync(process.execPath, ["--input-type=module", "--check"], { input: read(file), encoding: "utf8" });
+    assert.equal(result.status, 0, file + ": " + result.stderr);
+  }
+});
 
 // Every English string the page can show: data-t attributes, t("...") calls and the mode labels.
 function usedStrings() {
@@ -28,7 +36,7 @@ function usedStrings() {
   }
   for (const m of nativeEnglish.matchAll(/\b(?:Settings|Tutorial|Download): "([^"]+)"/g)) out.add(m[1]);
   const nativeQuit = nativeText.slice(nativeText.indexOf('return quitText{Warning: "Flashing'), nativeText.indexOf('// siteURL'));
-  for (const m of nativeQuit.matchAll(/\b(?:Warning|Keep|Quit): "([^"]+)"/g)) out.add(m[1]);
+  for (const m of nativeQuit.matchAll(/\b(?:Warning|Critical|Keep|Quit): "([^"]+)"/g)) out.add(m[1]);
   return out;
 }
 
@@ -58,7 +66,7 @@ test("new native menu labels match the page translations", () => {
 
 test("native quit warnings and buttons match the page translations", () => {
   const section = nativeText.slice(nativeText.indexOf("func quitStrings"), nativeText.indexOf("// siteURL"));
-  for (const key of ["Warning", "Keep", "Quit"]) {
+  for (const key of ["Warning", "Critical", "Keep", "Quit"]) {
     const labels = [...section.matchAll(new RegExp("\\b" + key + ': "([^"]+)"', "g"))].map((m) => m[1]);
     assert.equal(labels.length, 2, key);
     assert.equal(ZH[labels[1]], labels[0], key);

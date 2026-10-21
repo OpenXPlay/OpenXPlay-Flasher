@@ -35,6 +35,11 @@ func (webNative) OpenFile() (string, []byte, error) { return "", nil, errNoDialo
 
 func (webNative) OpenPackages(string) ([]string, error) { return nil, errNoDialogs }
 
+func (webNative) OpenIdentity() ([]string, error)   { return nil, errNoDialogs }
+func (webNative) OpenArtifact() (string, error)     { return "", errNoDialogs }
+func (webNative) OpenBackupFolder() (string, error) { return "", errNoDialogs }
+func (webNative) ShowFolder(path string) error      { return showFolder(path) }
+
 // SetLang: the page titles the browser tab itself, and a browser has no app menu.
 func (webNative) SetLang(string) {}
 

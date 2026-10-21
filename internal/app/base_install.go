@@ -96,7 +96,7 @@ func (s *Service) extendBaseChoicesLocked(state *InstallState, p profile.Profile
 		switch {
 		case !s.fastbootSupported:
 			c.Problem = &stage.Problem{Code: "fastboot-unsupported"}
-			c.Reason = profile.Text{"en": "This build cannot transfer data over fastboot. Base installation is unavailable.", "zh-CN": "此版本不支持 fastboot 数据传输，无法安装基础系统。"}
+			c.Reason = profile.Text{"en": "Flashing the base system is not available in the Windows version yet; use a Mac, or the manual guide.", "zh-CN": "Windows 版暂不支持刷写基础系统，请使用 Mac，或按照手动安装指南操作。"}
 		case s.baseIdentity == nil:
 			c.Problem = &stage.Problem{Code: "base-unconfirmed"}
 			c.Reason = profile.Text{"en": "Confirm this board's serial before installing the base system.", "zh-CN": "安装基础系统前，请先确认此设备的序列号。"}
@@ -144,7 +144,7 @@ func (s *Service) extendBaseChoicesLocked(state *InstallState, p profile.Profile
 		state.Choices = append(state.Choices, c)
 	}
 	if s.baseIdentity != nil {
-		if base.ResumeChoice(s.unfinished) != "" || s.baseIdentity.Mode == profile.ModeFastboot && s.baseIdentity.Product == p.Base.Fastboot.Product {
+		if s.baseIdentity.Mode == profile.ModeFastboot && (base.ResumeChoice(s.unfinished) != "" || s.baseIdentity.Product == p.Base.Fastboot.Product) {
 			state.Suggested = "repair"
 		} else if s.baseIdentity.Mode == profile.ModeStock || s.baseIdentity.Product == p.Base.Fastboot.StockProduct {
 			state.Suggested = "stock"
@@ -347,6 +347,10 @@ func (s *Service) startBase(ctx context.Context, req stage.Request) (InstallStat
 		s.unfinished = executor.Journal
 		s.mu.Unlock()
 		s.updateInstallJob(job)
+		if job.Status == "succeeded" {
+			_, _ = s.inspectInstall(jobCtx, "")
+			s.emitInstall()
+		}
 	}()
 	return state, nil
 }
@@ -469,6 +473,7 @@ func (s *Service) runLayersAfterBase(ctx context.Context, p profile.Profile, pac
 	return mergeBaseJob(baseJob, job)
 }
 func mergeBaseJob(baseJob, job stage.Job) stage.Job {
+	job.Retryable = false
 	offset := len(baseJob.Steps)
 	job.Steps = append(slices.Clone(baseJob.Steps), job.Steps...)
 	job.Profile, job.Serial, job.Plan = baseJob.Profile, baseJob.Serial, baseJob.Plan
@@ -498,6 +503,7 @@ type BackupSet struct {
 }
 
 type BackupListing struct {
+	Folder       string      `json:"folder"`
 	Profile      string      `json:"profile"`
 	Serial       string      `json:"serial"`
 	Sets         []BackupSet `json:"sets"`
@@ -506,7 +512,11 @@ type BackupListing struct {
 }
 
 func (s *Service) backupListing(ctx context.Context, p profile.Profile, serial string, sets []base.Backup) (BackupListing, error) {
-	listing := BackupListing{Profile: p.ID, Serial: serial, Sets: []BackupSet{}, RepairSource: "fresh-capture"}
+	folder, err := s.baseStore(p).Folder(serial)
+	if err != nil {
+		return BackupListing{}, err
+	}
+	listing := BackupListing{Folder: folder, Profile: p.ID, Serial: serial, Sets: []BackupSet{}, RepairSource: "fresh-capture"}
 	previous, err := (base.Journals{Dir: s.dataDir}).RepairSource(ctx, p.ID, serial)
 	if err != nil {
 		return listing, err

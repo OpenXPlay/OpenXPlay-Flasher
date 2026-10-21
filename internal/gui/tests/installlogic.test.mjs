@@ -5,7 +5,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { canChoose, canContinue, canStart, canNavigate, canSkipBackup, neededRows, confirmationWarning,
-  guardBeforeUnload, WARNING_TEXT, unplugText, problemText, elapsed, displayVersion, phase, mergeState, ACTION_TEXT } from "../assets/installlogic.js";
+  guardBeforeUnload, WARNING_TEXT, unplugText, problemText, elapsed, displayVersion, phase, mergeState, ACTION_TEXT,
+  suggestedAction, phaseStyle, phaseGroups, nextStepsState, identitySelection, backupRestoration } from "../assets/installlogic.js";
 import { setLang, t } from "../assets/i18n.js";
 
 const checked = (layer) => ({ layer, package: { checked: true }, status: "checked", ready: true });
@@ -127,4 +128,81 @@ test("late responses cannot restore stale summaries or move a finished job back 
   assert.equal(mergeState(current, { packages: [] }).installed, current.installed);
   const newer = { job: { started: "2026-10-21T00:02:00Z", status: "running" } };
   assert.equal(mergeState(current, newer), newer);
+});
+
+test("suggested actions follow stock, interrupted fastboot, OpenStick and installed relay states", () => {
+  assert.equal(suggestedAction({ identity: { mode: "stock" } }), "stock");
+  assert.equal(suggestedAction({ identity: { mode: "fastboot" }, resume: { finished: false } }), "repair");
+  assert.equal(suggestedAction({ installed: { layers: { base: "kernel" } } }), "full");
+  assert.equal(suggestedAction({ installed: { layers: { base: "kernel", device: "1", relay: "1" } } }), "relay");
+  assert.equal(suggestedAction(null), "");
+});
+
+test("Prepare gates every catalog artifact and permits a separately checked local package", () => {
+  const s = state();
+  const need = checked("relay");
+  need.package.sha256 = "local-hash";
+  need.artifacts = [{ role: "deb", verified: true }, { role: "manifest", verified: false }];
+  s.choices[2].needs = [need];
+  assert.equal(canContinue(s, "relay"), false);
+  need.artifacts[1].verified = true;
+  assert.equal(canContinue(s, "relay"), true);
+  need.artifacts[0].error = { code: "download" };
+  assert.equal(canContinue(s, "relay"), false);
+  need.artifacts.push({ role: "local", sha256: "local-hash", verified: true });
+  assert.equal(canContinue(s, "relay"), true);
+});
+
+test("destructive start requires the exact board serial, independently of Prepare readiness", () => {
+  const s = state();
+  s.identity = { serial: "43fb82bd" };
+  s.choices.push({ id: "base", layers: ["base"], destructive: true, needs: [checked("base")] });
+  assert.equal(canContinue(s, "base"), true);
+  for (const serial of ["", "another-board", "43FB82BD", "43fb82bd "]) assert.equal(canStart(s, "base", false, false, serial), false);
+  assert.equal(canStart(s, "base", false, false, "43fb82bd"), true);
+  assert.equal(canStart(s, "base", false, true, "43fb82bd"), false);
+});
+
+test("phase groups retain engine order and distinguish critical, resumable and neutral steps", () => {
+  const steps = [
+    { layer: "base", action: "confirm-stock" },
+    { layer: "base", critical: true, resumable: false, action: "flash" },
+    { layer: "base", action: "backup", resumable: true },
+    { layer: "base", id: "rootfs", action: "flash", resumable: true },
+    { layer: "base", action: "wait-linux", resumable: true },
+    { layer: "device", resumable: true }, { layer: "relay", resumable: true },
+  ];
+  assert.deepEqual(phaseGroups(steps).map((p) => p.phase), ["prepare", "critical", "backup", "system", "boot", "device", "relay"]);
+  assert.deepEqual(steps.slice(0, 3).map(phaseStyle), ["neutral", "critical", "resumable"]);
+});
+
+test("Done next steps bind identity and forward status to this dongle and a successful relay install", () => {
+  const s = { target: { device: {} }, identity: { serial: "board1" }, installed: { layers: { relay: "1" } },
+    job: { status: "succeeded" }, nextSteps: { serial: "board1", identity: "absent", forward: { active: true, serial: "board1", address: "https://127.0.0.1:60001/" } } };
+  assert.equal(nextStepsState(s).relay, true);
+  assert.equal(nextStepsState(s).identity, "absent");
+  assert.equal(nextStepsState(s).forward.address, s.nextSteps.forward.address);
+  s.nextSteps.identity = "present";
+  assert.equal(nextStepsState(s).identity, "present");
+  s.identity.serial = "board2";
+  assert.equal(nextStepsState(s).identity, "unknown");
+  assert.equal(nextStepsState(s).forward, null);
+  s.problem = { code: "no-device" };
+  assert.equal(nextStepsState(s).connected, false);
+  s.job.status = "failed";
+  assert.equal(nextStepsState(s).relay, false);
+});
+
+test("identity file selections support either order and report the missing filename", () => {
+  assert.deepEqual(identitySelection(["/tmp/certificate.p7b"]), { ready: false, missing: "identity.pk8" });
+  assert.deepEqual(identitySelection(["C:\\Users\\owner\\identity.pk8"]), { ready: false, missing: "certificate.p7b" });
+  assert.equal(identitySelection(["/tmp/certificate.p7b", "/tmp/identity.pk8"]).ready, true);
+  assert.equal(identitySelection(["/tmp/identity.ZIP"]).ready, true);
+});
+
+test("backup restoration follows the actual engine plan, including system-only full reinstalls", () => {
+  const listing = { repairSource: "previous-job", repairSet: "20261021T080000Z" };
+  assert.deepEqual(backupRestoration({ id: "repair", basePlan: "repair" }, listing), { source: "previous-job", set: listing.repairSet });
+  for (const id of ["base", "full-reinstall"]) assert.deepEqual(backupRestoration({ id, basePlan: "system" }, listing), { source: "none" });
+  assert.deepEqual(backupRestoration({ id: "stock", basePlan: "stock" }, listing), { source: "fresh-capture" });
 });

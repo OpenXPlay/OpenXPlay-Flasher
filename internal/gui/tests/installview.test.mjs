@@ -95,6 +95,7 @@ for (const language of ["en", "zh-CN"]) test("rendered layer-first flow, warning
   page.init(boot);
   globalThis.setInterval = savedInterval;
   const s = snapshot(); page.receive(s);
+  await d.get("install-continue").click();
   globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => snapshot() });
   assert.equal(d.get("install-continue").disabled, false);
   assert.equal(d.get("choice-relay").disabled, false);
@@ -155,6 +156,13 @@ for (const language of ["en", "zh-CN"]) test("rendered layer-first flow, warning
     finished: "2026-10-21T00:01:01Z", observed: true, installed: run.installed } });
   assert.ok(d.button("Read again"), "a completed result also flags a later stale observation");
   assert.ok(d.root.textContent.includes(t("Installed layers may have changed; these versions are the last observation.")));
+  const baseOnly = { layers: { base: "kernel" } };
+  page.receive({ ...run, installed: baseOnly, job: { ...run.job, started: "2026-10-21T00:02:00Z", status: "succeeded",
+    finished: "2026-10-21T00:02:01Z", observed: true, installed: baseOnly } });
+  assert.ok(d.root.textContent.includes(t("Next steps")));
+  assert.ok(d.root.textContent.includes(t("Install the remaining layers to start the relay.")));
+  assert.ok(d.nodes().some((n) => n.tag === "a" && n.attributes.href.includes("#step-network")));
+  assert.equal(d.get("identity-pick"), undefined);
 });
 
 test("a missing base offers only the localized guide", async () => {
@@ -165,6 +173,7 @@ test("a missing base offers only the localized guide", async () => {
   delete s.installed.layers.base;
   for (const c of s.choices) c.problem = { code: "base-missing" };
   page.receive(s);
+  await d.get("install-continue").click();
   assert.equal(d.get("choice-full"), undefined);
   assert.equal(d.get("install-continue"), undefined);
   const guide = d.nodes().find((n) => n.tag === "a");
@@ -183,6 +192,7 @@ test("base choices render their localized names, reasons and named steps", async
   s.choices.push({ id: "base", name: { en: "Reinstall base", "zh-CN": "重新安装基础系统" },
     layers: ["base"], destructive: true, needs: [{ layer: "base" }], steps: [{ layer: "base", action: "flash", name: { en: "Write rootfs", "zh-CN": "写入根文件系统" } }] });
   page.receive(s);
+  await d.get("install-continue").click();
   assert.equal(d.get("choice-stock").disabled, true);
   assert.ok(d.root.textContent.includes("需要原厂固件"));
   await d.get("choice-base").click();

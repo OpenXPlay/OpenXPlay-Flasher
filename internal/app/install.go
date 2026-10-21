@@ -30,6 +30,7 @@ type InstallTarget struct {
 }
 
 type InstallState struct {
+	NextSteps      NextSteps            `json:"nextSteps"`
 	Artifacts      []stage.ArtifactNeed `json:"artifacts"`
 	Catalog        CatalogState         `json:"catalog"`
 	Identity       *base.Identity       `json:"identity,omitempty"`
@@ -105,7 +106,7 @@ func (s *Service) installDevice(ctx context.Context) (InstallTarget, profile.Pro
 }
 
 func (s *Service) installSnapshotLocked() InstallState {
-	state := InstallState{Catalog: s.catalogState, Identity: s.baseIdentity, Resume: s.unfinished, Target: s.installTarget, Installed: s.installed, Packages: stage.PackageInfos(s.packages),
+	state := InstallState{NextSteps: s.nextSteps, Catalog: s.catalogState, Identity: s.baseIdentity, Resume: s.unfinished, Target: s.installTarget, Installed: s.installed, Packages: stage.PackageInfos(s.packages),
 		Layers: []stage.LayerRow{}, Choices: []stage.Choice{}, Problem: s.installProblem, Job: s.installJob, InstalledStale: s.installStale}
 	for _, key := range sortedKeys(s.artifacts) {
 		state.Artifacts = append(state.Artifacts, s.artifacts[key])
@@ -188,6 +189,9 @@ func (s *Service) inspectInstall(ctx context.Context, choice string) (profile.Pr
 						facts = checked
 					}
 				}
+			}
+			if err == nil && facts.Layers["relay"] != "" && serialErr == nil {
+				s.observeIdentity(ctx, d, serial)
 			}
 			d.Close()
 			if err == nil && serialErr == nil {
@@ -288,12 +292,32 @@ func (s *Service) InstallRemove(id string) (InstallState, error) {
 // InstallStart re-plans against fresh facts under the same lock held until the job finishes. The
 // request may end after this returns; the service lifetime, not the HTTP connection, owns the job.
 func (s *Service) InstallStart(ctx context.Context, req stage.Request) (InstallState, error) {
+	s.ForwardStop()
 	if req.BasePlan != "" && !isBaseChoice(req.Choice) {
 		return s.InstallSnapshot(), &stage.Problem{Code: "bad-plan"}
 	}
 	if isBaseChoice(req.Choice) {
 		return s.startBase(ctx, req)
 	}
+	return s.startLayers(ctx, req, nil)
+}
+
+// InstallRetry accepts only an engine-offered verification retry for the exact finished job.
+// The package digest, model, serial and fresh requirements are rechecked below. No install or
+// reboot command is part of this retry; those require a new plan or Repair.
+func (s *Service) InstallRetry(ctx context.Context, started time.Time) (InstallState, error) {
+	s.mu.Lock()
+	job, req := s.installJob, s.lastInstall
+	if job == nil || job.Status != "failed" || !job.Retryable || !job.Started.Equal(started) || isBaseChoice(req.Choice) {
+		s.mu.Unlock()
+		return s.InstallSnapshot(), &stage.Problem{Code: "retry-unavailable"}
+	}
+	copy := *job
+	s.mu.Unlock()
+	return s.startLayers(ctx, req, &copy)
+}
+
+func (s *Service) startLayers(ctx context.Context, req stage.Request, retry *stage.Job) (InstallState, error) {
 	if !s.configMu.TryLock() {
 		return s.InstallSnapshot(), ErrDeviceBusy
 	}
@@ -339,6 +363,39 @@ func (s *Service) InstallStart(ctx context.Context, req stage.Request) (InstallS
 		s.configMu.Unlock()
 		return s.emitInstall(), plan.Problem
 	}
+	serial := ""
+	if s.baseIdentity != nil {
+		serial = s.baseIdentity.Serial
+	}
+	if retry != nil {
+		valid := s.installJob != nil && s.installJob.Started.Equal(retry.Started) && s.installJob.Status == "failed" && s.installJob.Retryable && serial != "" && serial == retry.Serial
+		index := -1
+		if valid && retry.Failed >= 0 && retry.Failed < len(retry.Steps) {
+			failed := retry.Steps[retry.Failed].Step
+			for i, step := range plan.Steps {
+				if step.Layer == failed.Layer && step.Action == failed.Action && step.PackageID == failed.PackageID {
+					index = i
+					break
+				}
+			}
+		}
+		if index >= 0 {
+			for _, step := range plan.Steps[index:] {
+				valid = valid && !step.Critical && step.Resumable && (step.Action == "verify" || step.Action == "installed")
+			}
+			for _, pkg := range packages {
+				valid = valid && facts.Layers[pkg.Manifest().Stage] == pkg.Manifest().Version
+			}
+		} else {
+			valid = false
+		}
+		if !valid {
+			s.mu.Unlock()
+			s.configMu.Unlock()
+			return s.emitInstall(), &stage.Problem{Code: "retry-unavailable"}
+		}
+		plan.Steps = slices.Clone(plan.Steps[index:])
+	}
 	// Acquire before publishing a running job or executing any device write.
 	inhibitor := s.sleepInhibitor
 	if inhibitor == nil {
@@ -357,16 +414,29 @@ func (s *Service) InstallStart(ctx context.Context, req stage.Request) (InstallS
 	jobCtx, cancel := context.WithCancel(life)
 	done := make(chan struct{})
 	s.installCancel, s.installDone = cancel, done
-	initial := stage.Job{Status: "running", Started: time.Now(), Failed: -1, Steps: []stage.StepProgress{}}
+	initial := stage.Job{Profile: p.ID, Serial: serial, Status: "running", Started: time.Now(), Failed: -1, Steps: []stage.StepProgress{}}
 	for _, step := range plan.Steps {
 		initial.Steps = append(initial.Steps, stage.StepProgress{Step: step, Status: "pending"})
 	}
 	s.installJob = &initial
+	s.lastInstall = req
 	s.installStale = true
 	s.mu.Unlock()
 	executor := stage.NewExecutor(p, packages)
 	if s.newExecutor != nil {
 		executor = s.newExecutor(p, packages)
+	}
+	if serial != "" {
+		executor.Confirm = func(ctx context.Context, d adb.Device) error {
+			actual, err := base.LinuxSerial(ctx, d)
+			if err != nil {
+				return err
+			}
+			if actual != serial {
+				return &stage.Problem{Code: "serial-mismatch"}
+			}
+			return nil
+		}
 	}
 	executor.Guard = func(ctx context.Context) error {
 		t, _, err := s.installDevice(ctx)
@@ -398,6 +468,8 @@ func (s *Service) InstallStart(ctx context.Context, req stage.Request) (InstallS
 		return d, err
 	}
 	executor.Emit = func(job stage.Job) {
+		job.Profile, job.Serial = p.ID, serial
+		job.Retryable = job.Retryable && serial != ""
 		// The executor logs a failure before attempting its final readback. Keep the warning
 		// and close guard armed until that readback has finished, too.
 		if job.Finished.IsZero() {
@@ -418,7 +490,11 @@ func (s *Service) InstallStart(ctx context.Context, req stage.Request) (InstallS
 		defer cancel()
 		defer s.configMu.Unlock()
 		defer release()
-		executor.Run(jobCtx, plan)
+		job := executor.Run(jobCtx, plan)
+		if job.Status == "succeeded" {
+			_, _ = s.inspectInstall(jobCtx, "")
+			s.emitInstall()
+		}
 	}()
 	return state, nil
 }
@@ -454,6 +530,20 @@ func (s *Service) InstallRunning() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.installJob != nil && s.installJob.Status == "running"
+}
+
+func (s *Service) InstallCritical() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.installJob == nil || s.installJob.Status != "running" {
+		return false
+	}
+	for _, step := range s.installJob.Steps {
+		if step.Status == "running" && step.Critical {
+			return true
+		}
+	}
+	return false
 }
 
 // SetSleepInhibitor is shell wiring; tests and platforms without power APIs use the no-op.

@@ -69,6 +69,11 @@ func (s *Service) scanDevices(ctx context.Context, probe bool) device.Snapshot {
 			fb.Close()
 			if err == nil {
 				c.Product, c.Serialno = identity.Product, identity.Serial
+				for _, p := range s.profiles {
+					if p.Base != nil && (identity.Product == p.Base.Fastboot.Product || identity.Product == p.Base.Fastboot.StockProduct) && !slices.Contains(c.Profiles, p.ID) {
+						c.Profiles = append(c.Profiles, p.ID)
+					}
+				}
 			}
 		}
 		if err != nil {
@@ -130,6 +135,15 @@ func (s *Service) DesignateStock(ctx context.Context, location string) (InstallS
 	s.designations[location] = stockDesignation{Profile: p.ID, Identity: identity, USB: target.USB}
 	s.mu.Unlock()
 	_, err = s.inspectInstall(ctx, "")
+	if err == nil {
+		snap := s.scanDevices(ctx, false)
+		s.mu.Lock()
+		s.current = snap
+		s.mu.Unlock()
+		if s.events != nil {
+			s.events.Emit(EventDevices, snap)
+		}
+	}
 	return s.emitInstall(), err
 }
 

@@ -33,6 +33,10 @@ type Events interface {
 // Service owns one flasher session.
 type Service struct {
 	background sync.WaitGroup
+	stopping   bool
+	adminMu    sync.Mutex
+	admin      *adminTunnel
+	nextSteps  NextSteps
 	profiles   []profile.Profile
 	detector   device.Detector
 	events     Events
@@ -66,6 +70,7 @@ type Service struct {
 	installJob      *stage.Job
 	installCancel   context.CancelFunc
 	installDone     chan struct{}
+	lastInstall     stage.Request
 	newExecutor     func(profile.Profile, []*stage.Package) *stage.Executor
 
 	// configMu serialises configuration operations and holds the device for an entire install.
@@ -76,7 +81,7 @@ type Service struct {
 
 // New returns a stopped service for the given profiles; Start begins watching for devices.
 func New(profiles []profile.Profile, detector device.Detector, events Events) *Service {
-	return &Service{profiles: profiles, detector: detector, events: events, interval: time.Second, fastbootOpen: base.NativeFastboot, fastbootSupported: usb.TransfersSupported(), designations: map[string]stockDesignation{}}
+	return &Service{profiles: profiles, detector: detector, events: events, interval: time.Second, fastbootOpen: base.NativeFastboot, fastbootSupported: usb.TransfersSupported(), designations: map[string]stockDesignation{}, nextSteps: NextSteps{Identity: "unknown"}}
 }
 
 // NewForBus returns a service over a USB bus with the profiles built into the binary.
@@ -97,6 +102,7 @@ func (s *Service) Start(ctx context.Context) {
 		return
 	}
 	ctx, s.cancel = context.WithCancel(ctx)
+	s.stopping = false
 	s.lifeCtx = ctx
 	done := make(chan struct{})
 	s.done = done
@@ -113,6 +119,7 @@ func (s *Service) Start(ctx context.Context) {
 	go func() {
 		defer close(done)
 		device.Watch(ctx, sessionDetector{s: s}, s.interval, func(snap device.Snapshot) {
+			s.checkForward(snap)
 			s.mu.Lock()
 			s.current = snap
 			s.mu.Unlock()
@@ -125,6 +132,10 @@ func (s *Service) Start(ctx context.Context) {
 
 // Stop ends the watch and waits for it to return.
 func (s *Service) Stop() {
+	s.mu.Lock()
+	s.stopping = true
+	s.mu.Unlock()
+	s.ForwardStop()
 	s.mu.Lock()
 	cancel, done := s.cancel, s.done
 	installCancel, installDone := s.installCancel, s.installDone
@@ -155,5 +166,7 @@ func (s *Service) Devices() device.Snapshot {
 
 // Rescan scans now, without waiting for the next poll.
 func (s *Service) Rescan(ctx context.Context) device.Snapshot {
-	return s.scanDevices(ctx, true)
+	snap := s.scanDevices(ctx, true)
+	s.checkForward(snap)
+	return snap
 }

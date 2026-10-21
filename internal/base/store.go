@@ -85,6 +85,9 @@ func (s *Store) path(serial string) (string, error) {
 	return filepath.Join(s.Dir, s.Profile.ID+"-"+serial), nil
 }
 
+// Folder exposes only this validated serial's backup folder, for the native reveal action.
+func (s *Store) Folder(serial string) (string, error) { return s.path(serial) }
+
 func regular(path string) (*os.File, error) {
 	st, err := os.Lstat(path)
 	if err != nil {

@@ -15,13 +15,13 @@ func appTitle(lang string) string {
 	return "OpenXPlay Flasher"
 }
 
-type quitText struct{ Warning, Keep, Quit string }
+type quitText struct{ Warning, Critical, Keep, Quit string }
 
 func quitStrings(lang string) quitText {
 	if lang == LangChinese {
-		return quitText{Warning: "刷写正在进行。现在退出可能导致设备无法使用。", Keep: "继续刷写", Quit: "仍然退出"}
+		return quitText{Warning: "刷写正在进行。现在退出可能导致设备无法使用。", Critical: "正在写入关键引导数据。现在退出、拔出设备或断电，可能导致设备无法启动且无法通过 USB 修复。请保持连接并等待完成。", Keep: "继续刷写", Quit: "仍然退出"}
 	}
-	return quitText{Warning: "Flashing is in progress. Quitting now can leave the device unusable.", Keep: "Keep flashing", Quit: "Quit anyway"}
+	return quitText{Warning: "Flashing is in progress. Quitting now can leave the device unusable.", Critical: "Critical bootloader writes are in progress. Quitting, unplugging or cutting power now can leave the device unable to start or repair over USB. Keep it connected and wait for completion.", Keep: "Keep flashing", Quit: "Quit anyway"}
 }
 
 // siteURL is the project website in the UI language.

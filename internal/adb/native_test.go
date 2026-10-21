@@ -311,7 +311,7 @@ func (a *fakeADBD) handle(m message) {
 		if !ok || m.arg0 == 0 || m.arg1 != 0 {
 			a.errorf("OPEN %d %d %q", m.arg0, m.arg1, m.data)
 		}
-		if !strings.HasPrefix(name, "shell") && name != "sync:" {
+		if !strings.HasPrefix(name, "shell") && name != "sync:" && name != "tcp:6975" {
 			a.send(message{command: cmdCLSE, arg1: m.arg0})
 			return
 		}

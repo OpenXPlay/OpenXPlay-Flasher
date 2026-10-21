@@ -42,10 +42,11 @@ func runtimeIcon() []byte {
 
 // host is the Wails application: it owns the window and implements Native.
 type host struct {
-	app   *application.App
-	guard *closeGuard
-	mu    sync.Mutex
-	lang  string
+	app      *application.App
+	guard    *closeGuard
+	critical func() bool
+	mu       sync.Mutex
+	lang     string
 }
 
 func (h *host) OpenURL(url string) error {
@@ -73,6 +74,9 @@ func (h *host) confirmQuit(answer func(bool)) {
 	lang := h.lang
 	h.mu.Unlock()
 	s := quitStrings(lang)
+	if h.critical != nil && h.critical() {
+		s.Warning = s.Critical
+	}
 	dialog := h.app.Dialog.Warning().SetTitle(appTitle(lang)).SetMessage(s.Warning)
 	dialog.AddButton(s.Keep).SetAsDefault().SetAsCancel().OnClick(func() { answer(false) })
 	dialog.AddButton(s.Quit).OnClick(func() { answer(true) })
@@ -112,6 +116,18 @@ func (h *host) OpenPackages(layer string) ([]string, error) {
 		AddFilter(strings.Join(patterns, ", "), strings.Join(patterns, ";")).PromptForMultipleSelection()
 }
 
+func (h *host) OpenIdentity() ([]string, error) {
+	return h.app.Dialog.OpenFile().CanChooseFiles(true).
+		AddFilter("identity.pk8, certificate.p7b, ZIP", "*.pk8;*.p7b;*.zip").PromptForMultipleSelection()
+}
+func (h *host) OpenArtifact() (string, error) {
+	return h.app.Dialog.OpenFile().CanChooseFiles(true).PromptForSingleSelection()
+}
+func (h *host) OpenBackupFolder() (string, error) {
+	return h.app.Dialog.OpenFile().CanChooseFiles(false).CanChooseDirectories(true).PromptForSingleSelection()
+}
+func (h *host) ShowFolder(path string) error { return h.app.Browser.OpenFile(path) }
+
 func (h *host) openInBrowser(url string) {
 	if err := h.OpenURL(url); err != nil {
 		log.Println("openxplay-flasher: opening", url+":", err)
@@ -148,7 +164,7 @@ func Run() error {
 	settings := NewSettingsStore(dir)
 	sysLang := systemLang()
 	lang := UILang(settings.Load().Lang, sysLang)
-	h := &host{lang: lang}
+	h := &host{lang: lang, critical: svc.InstallCritical}
 	h.guard = &closeGuard{running: svc.InstallRunning, prompt: h.confirmQuit, quit: func() { h.app.Quit() }}
 
 	h.app = application.New(application.Options{

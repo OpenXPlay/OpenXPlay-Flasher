@@ -618,8 +618,8 @@ func TestReadOnlyFastbootFactsAndResumeOffer(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := s.Install(t.Context())
-	if state.Suggested != "repair" || !slices.ContainsFunc(state.Choices, func(c stage.Choice) bool { return c.ID == "repair" }) {
-		t.Fatal("unfinished journal did not offer repair")
+	if state.Suggested != "full" || !slices.ContainsFunc(state.Choices, func(c stage.Choice) bool { return c.ID == "repair" }) {
+		t.Fatal("Linux should suggest its missing adb layers while keeping explicit Repair available")
 	}
 	journal.Finished = true
 	if err := (base.Journals{Dir: s.dataDir}).Save(t.Context(), journal); err != nil {

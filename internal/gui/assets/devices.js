@@ -6,7 +6,7 @@
 
 const MODE_LABELS = {
   adb: "Linux running, adb on",
-  fastboot: "Fastboot (bootloader)",
+  fastboot: "Bootloader (fastboot)",
   edl: "Emergency download (EDL 9008)",
   stock: "Original firmware (designated)",
 };

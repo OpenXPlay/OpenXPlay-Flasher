@@ -6,7 +6,7 @@
 // it runs the same in the app window, in a browser (openxplay-flasher web) and in tests.
 
 import { t, setLang, lang, translateStatic } from "./i18n.js";
-import { deviceView, modelView, modeLabel, otherModeLabel, usbId, usbPort } from "./devices.js";
+import { deviceView, modelView, modeLabel, usbId, usbPort } from "./devices.js";
 import { api, el } from "./ui.js";
 import { problemText } from "./installlogic.js";
 import * as configView from "./config.js";
@@ -16,7 +16,7 @@ import { effectiveLanguage, linksFor, viewFromHash, viewAllowed } from "./settin
 
 const boot = window.bootPrefs || { lang: "en", systemLang: "en", saved: "", links: {}, web: true };
 const state = { info: null, infoError: false, profiles: [], devices: null, rev: 0, offline: false, othersOpen: false,
-  view: "install", savedLang: boot.saved || "", languageBusy: false, languageError: false };
+  view: "install", savedLang: boot.saved || "", languageBusy: false, languageError: false, designation: "", designationBusy: false };
 
 function status(kind, title, text) {
   return el("div", { class: "status " + kind }, [
@@ -38,9 +38,17 @@ function deviceCard(c) {
   if (c.serialno) rows.push(el("dt", {}, t("Board serial")), el("dd", {}, c.serialno));
   if (model.layers.length) {
     rows.push(el("dt", {}, t("Layers")), el("dd", {}, el("ol", {}, model.layers.map((l) =>
-      el("li", {}, [l.name, l.destructive ? el("span", { class: "tag" }, t("erases the device")) : ""])))));
+      el("li", {}, [l.name, l.destructive ? el("span", { class: "tag destructive-tag" }, t("erases the device")) : ""])))));
   }
-  return el("dl", { class: "device-card" }, rows);
+  const serial = c.serialno || c.usb.serial;
+  const install = installView.snapshot();
+  const unfinished = install?.resume && !install.resume.finished && install.resume.serial === serial;
+  return el("article", { class: "connected-device" }, [
+    c.mode === "fastboot" ? el("strong", {}, t("Bootloader (fastboot) · {product} · {serial}", { product: c.product || "—", serial: serial || "—" })) : "",
+    el("dl", { class: "device-card" }, rows),
+    unfinished ? el("div", { class: "warning" }, [el("p", {}, t("An earlier installation did not finish")),
+      el("button", { type: "button", onclick: () => installView.selectRepair() }, t("Repair"))]) : "",
+  ]);
 }
 
 // renderDevices rebuilds the card. The disclosure keeps its open state and the focused control
@@ -64,7 +72,8 @@ function renderDevices() {
       break;
     case "one":
       parts.push(status("ok", "Device found",
-        "The model and installed layers are checked over adb before installation."),
+        view.supported[0].mode === "fastboot" ? t("The bootloader product and serial are checked before flashing.") :
+          view.supported[0].mode === "stock" ? t("Original firmware confirmed. Continue to choose the installation.") : t("The model and installed layers are checked over adb before installation.")),
         deviceCard(view.supported[0]));
       break;
     case "many":
@@ -72,20 +81,30 @@ function renderDevices() {
         ...view.supported.map(deviceCard));
       break;
   }
-  if (view.others.length) {
-    const summary = view.others.length === 1
+  const ignoredADB = view.others.filter((c) => c.mode === "adb");
+  if (ignoredADB.length) {
+    const summary = ignoredADB.length === 1
       ? t("1 other Android device is connected and ignored.")
-      : t("{n} other Android devices are connected and ignored.", { n: view.others.length });
+      : t("{n} other Android devices are connected and ignored.", { n: ignoredADB.length });
     const details = el("details", { class: "others" }, [
       el("summary", { "data-focus": "others" }, summary),
       el("p", {}, t("Unknown adb devices are ignored until you explicitly designate one as a UFI003 with its original firmware.")),
-      el("ul", {}, view.others.map((c) => el("li", {}, [usbId(c.usb) + " · " + t(otherModeLabel(c.mode)) + " · " + usbPort(c.usb) + (c.product ? " · " + c.product + " · " + c.serialno : ""),
-        c.mode === "adb" ? el("button", { type: "button", onclick: async () => {
-          try { await api("devices/designate-stock", { location: usbPort(c.usb) }); state.designationError=""; }
-          catch (error) { state.designationError = problemText(t, { code: error.code, detail: error.message }); }
-          renderDevices();
-        } }, t("This is a UFI003 with its original firmware")) : "",
-      ])))),
+      el("ul", {}, ignoredADB.map((c) => el("li", {}, [usbId(c.usb) + " · " + usbPort(c.usb),
+        c.mode === "adb" ? el("button", { type: "button", disabled: state.designationBusy,
+          onclick: () => { state.designation = usbPort(c.usb); state.designationError = ""; renderDevices(); } }, t("This is a UFI003 with its original firmware")) : "",
+        state.designation === usbPort(c.usb) ? el("div", { class: "designation-confirm" }, [
+          el("p", {}, t("The app will read this device's model over adb to confirm that it is a UFI003 with its original firmware.")),
+          el("button", { type: "button", disabled: state.designationBusy, onclick: async () => {
+            state.designationBusy = true; renderDevices();
+            try {
+              installView.receive(await api("devices/designate-stock", { location: usbPort(c.usb) }));
+              state.designationError = ""; state.designation = "";
+            } catch (error) { state.designationError = problemText(t, error); }
+            state.designationBusy = false; renderDevices();
+          } }, t("Confirm model")),
+          el("button", { type: "button", disabled: state.designationBusy, onclick: () => { state.designation = ""; renderDevices(); } }, t("Cancel")),
+        ]) : "",
+      ]))),
       state.designationError ? el("p", { class: "error-box" }, state.designationError) : "",
     ]);
     details.open = state.othersOpen;
@@ -189,8 +208,8 @@ async function follow() {
       if (next.rev > 0) state.devices = next.devices;
       state.offline = false;
       if (changed) {
-        renderDevices();
         if (next.install) installView.receive(next.install);
+        renderDevices();
         if (devicesChanged && state.view === "config") configView.refresh();
         if (devicesChanged && state.view === "install") installView.refresh();
       }

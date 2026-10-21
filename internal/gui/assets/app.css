@@ -484,6 +484,44 @@ button:disabled { opacity: .45; cursor: default; }
 .stale { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
 .needed { color: var(--warn); font-weight: 600; }
 .result .layer-summary, .error-box .layer-summary { margin-top: 10px; }
+.connected-device { display: grid; gap: 10px; }
+.connected-device button, .others button { font: inherit; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); cursor: pointer; }
+.others li, .designation-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.designation-confirm { flex-basis: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.designation-confirm p { flex-basis: 100%; }
+.destructive-tag { display: inline-block; color: var(--error); background: var(--error-soft); border: 1px solid var(--error); margin: 6px; }
+.destructive-confirm { border: 2px solid var(--error); background: var(--error-soft); padding: 18px; }
+.destructive-confirm .flash-warning { color: var(--error); border-color: var(--error); background: var(--error-soft); }
+.destructive-confirm button.primary { background: var(--error); border-color: var(--error); color: var(--surface); }
+.serial-card { font: 650 18px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .04em; }
+.artifact-rows { list-style: none; padding: 0; display: grid; gap: 12px; }
+.artifact-row { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
+.artifact-heading { display: flex; gap: 12px; justify-content: space-between; align-items: baseline; }
+.artifact-heading span { flex: none; color: var(--muted); }
+.install details > summary { cursor: pointer; }
+.artifact-row details, .local-package { color: var(--muted); font-size: 13px; }
+.artifact-row details[open], .local-package[open] { display: grid; gap: 8px; }
+progress { width: 100%; height: 10px; accent-color: var(--accent); }
+.download-total { padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); }
+.catalog-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.backup-sets { display: grid; gap: 10px; }
+.backup-sets details { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.backup-sets ul { padding-left: 18px; margin-bottom: 0; font-size: 13px; }
+.backup-sets li { padding: 3px 0; }
+.backup-folder { overflow-wrap: anywhere; }
+.restore-source { padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--accent-soft); }
+.job-phases { display: grid; gap: 8px; }
+.job-phase { padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; }
+.phase-warning { padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.phase-warning p { margin-top: 4px; }
+.phase-warning.resumable { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+.phase-warning.critical, .job-phase.critical, .running-warning.critical { color: var(--error); background: var(--error-soft); border-color: var(--error); }
+.job-steps .running.critical { color: var(--error); }
+.job-steps .running.resumable { color: var(--warn); }
+.next-steps { padding: 18px; display: grid; gap: 12px; border: 1px solid var(--accent); border-radius: 10px; background: var(--surface); }
+.next-steps h3 { font-size: 16px; }
+.admin-address { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.base-findings { margin-top: 12px; }
 @media (max-width: 760px) {
   .layer-row { grid-template-columns: 1fr; }
   .stale { align-items: start; flex-direction: column; }
