@@ -36,8 +36,8 @@ type Native interface {
 	SaveFile(name string, data []byte) (string, error)
 	// OpenFile asks for a file on this computer and reads it; name is "" when cancelled.
 	OpenFile() (name string, data []byte, err error)
-	// OpenPackages returns paths from a native multi-file picker without reading the payloads.
-	OpenPackages() ([]string, error)
+	// OpenPackages filters the picker to the selected layer without reading the payloads.
+	OpenPackages(layer string) ([]string, error)
 }
 
 // errNoDialogs: browser mode has no native dialogs; the page uses the browser's own.

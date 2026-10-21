@@ -32,12 +32,13 @@ func installRoutes(mux *http.ServeMux, d Deps) {
 	})
 	mux.HandleFunc("POST /api/install/packages", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
-			Path string `json:"path"`
+			Path  string `json:"path"`
+			Layer string `json:"layer"`
 		}
 		if !readJSON(w, r, &in) {
 			return
 		}
-		state, err := d.Service.InstallAdd(in.Path)
+		state, err := d.Service.InstallAddForLayer(in.Layer, in.Path)
 		if err != nil {
 			writeInstallError(w, err)
 			return
@@ -45,8 +46,14 @@ func installRoutes(mux *http.ServeMux, d Deps) {
 		writeJSON(w, http.StatusOK, state)
 	})
 	mux.HandleFunc("POST /api/install/pick", func(w http.ResponseWriter, r *http.Request) {
-		var in struct{}
+		var in struct {
+			Layer string `json:"layer"`
+		}
 		if !readJSON(w, r, &in) {
+			return
+		}
+		if len(stage.PackageFileTypes(in.Layer)) == 0 {
+			writeError(w, http.StatusBadRequest, "wrong-layer", in.Layer)
 			return
 		}
 		if d.Web {
@@ -57,13 +64,13 @@ func installRoutes(mux *http.ServeMux, d Deps) {
 			writeError(w, http.StatusConflict, "busy", "a device operation is already running")
 			return
 		}
-		paths, err := d.Native.OpenPackages()
+		paths, err := d.Native.OpenPackages(in.Layer)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "picker", err.Error())
 			return
 		}
 		for _, path := range paths {
-			if _, err := d.Service.InstallAdd(path); err != nil {
+			if _, err := d.Service.InstallAddForLayer(in.Layer, path); err != nil {
 				writeInstallError(w, err)
 				return
 			}

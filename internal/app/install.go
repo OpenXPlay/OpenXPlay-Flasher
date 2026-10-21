@@ -12,6 +12,7 @@ import (
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/power"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
 )
@@ -26,12 +27,15 @@ type InstallTarget struct {
 }
 
 type InstallState struct {
-	Target    *InstallTarget      `json:"target,omitempty"`
-	Installed *stage.Facts        `json:"installed,omitempty"`
-	Packages  []stage.PackageInfo `json:"packages"`
-	Choices   []stage.Plan        `json:"choices"`
-	Problem   *stage.Problem      `json:"problem,omitempty"`
-	Job       *stage.Job          `json:"job,omitempty"`
+	Target         *InstallTarget      `json:"target,omitempty"`
+	Installed      *stage.Facts        `json:"installed,omitempty"`
+	Packages       []stage.PackageInfo `json:"packages"`
+	Layers         []stage.LayerRow    `json:"layers"`
+	Choices        []stage.Choice      `json:"choices"`
+	Suggested      string              `json:"suggested"`
+	InstalledStale bool                `json:"installedStale"`
+	Problem        *stage.Problem      `json:"problem,omitempty"`
+	Job            *stage.Job          `json:"job,omitempty"`
 }
 
 func installProblem(err error) *stage.Problem {
@@ -95,7 +99,7 @@ func (s *Service) installDevice(ctx context.Context) (InstallTarget, profile.Pro
 
 func (s *Service) installSnapshotLocked() InstallState {
 	state := InstallState{Target: s.installTarget, Installed: s.installed, Packages: stage.PackageInfos(s.packages),
-		Choices: []stage.Plan{}, Problem: s.installProblem, Job: s.installJob}
+		Layers: []stage.LayerRow{}, Choices: []stage.Choice{}, Problem: s.installProblem, Job: s.installJob, InstalledStale: s.installStale}
 	var p profile.Profile
 	if state.Target != nil {
 		for _, candidate := range s.profiles {
@@ -104,16 +108,15 @@ func (s *Service) installSnapshotLocked() InstallState {
 			}
 		}
 	}
-	for _, choice := range []string{"full", "device", "relay"} {
-		if state.Problem != nil || state.Installed == nil {
-			problem := state.Problem
-			if problem == nil {
-				problem = &stage.Problem{Code: "no-device"}
+	if state.Installed != nil {
+		state.Choices = stage.BuildChoices(p, *state.Installed, preparedPackages{stage.PackageSet(s.packages), s.packageProblems}, false)
+		for i := range state.Choices {
+			if state.Problem != nil {
+				state.Choices[i].Problem, state.Choices[i].Ready = state.Problem, false
 			}
-			state.Choices = append(state.Choices, stage.Plan{Choice: choice, Steps: []stage.Step{}, Problem: problem})
-		} else {
-			state.Choices = append(state.Choices, stage.BuildPlan(p, *state.Installed, s.packages, stage.Request{Choice: choice, Downgrade: true}))
 		}
+		state.Layers = stage.LayerRows(p, *state.Installed, state.Choices)
+		state.Suggested = stage.SuggestedChoice(state.Choices, *state.Installed)
 	}
 	return state
 }
@@ -133,27 +136,50 @@ func (s *Service) emitInstall() InstallState {
 	return state
 }
 
-func (s *Service) inspectInstall(ctx context.Context) (profile.Profile, error) {
+func (s *Service) inspectInstall(ctx context.Context, choice string) (profile.Profile, error) {
 	target, p, err := s.installDevice(ctx)
 	var facts stage.Facts
+	packageProblems := map[string]*stage.Problem{}
 	if err == nil {
 		s.mu.Lock()
 		connector, packages := s.adb, slices.Clone(s.packages)
 		s.mu.Unlock()
+		if choice != "" {
+			packages = choicePackages(p, packages, choice)
+		}
 		var d adb.Device
 		d, err = connector.Connect(ctx, target.Device.USB)
 		if err == nil {
-			facts, err = stage.Inspect(ctx, d.Shell, p, packages)
+			// Discover installed layers from the profile alone; package-specific observations
+			// belong to Prepare and cannot make choosing an unrelated layer fail.
+			facts, err = stage.Inspect(ctx, d.Shell, p, nil)
+			if err == nil {
+				for _, pkg := range packages {
+					m := pkg.Manifest()
+					if m.Device != "" && m.Device != p.ID {
+						continue
+					}
+					checked, readErr := stage.InspectPackageRequirements(ctx, d.Shell, facts, pkg)
+					if readErr != nil {
+						packageProblems[m.Stage] = installProblem(readErr)
+					} else {
+						facts = checked
+					}
+				}
+			}
 			d.Close()
 		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.installTarget, s.installed, s.installProblem = nil, nil, nil
+	s.installProblem = nil
 	if err != nil {
 		s.installProblem = installProblem(err)
+		s.installStale = s.installed != nil
 	} else {
 		s.installTarget, s.installed = &target, &facts
+		s.packageProblems = packageProblems
+		s.installStale = false
 	}
 	return p, err
 }
@@ -163,7 +189,7 @@ func (s *Service) inspectInstall(ctx context.Context) (profile.Profile, error) {
 func (s *Service) Install(ctx context.Context) InstallState {
 	if s.configMu.TryLock() {
 		readCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		_, _ = s.inspectInstall(readCtx)
+		_, _ = s.inspectInstall(readCtx, "")
 		cancel()
 		s.configMu.Unlock()
 	}
@@ -172,6 +198,10 @@ func (s *Service) Install(ctx context.Context) InstallState {
 
 // InstallAdd loads and checks a local file. Loading another version replaces that layer's package.
 func (s *Service) InstallAdd(filename string) (InstallState, error) {
+	return s.InstallAddForLayer("", filename)
+}
+
+func (s *Service) InstallAddForLayer(layer, filename string) (InstallState, error) {
 	if !s.configMu.TryLock() {
 		return s.InstallSnapshot(), ErrDeviceBusy
 	}
@@ -180,11 +210,14 @@ func (s *Service) InstallAdd(filename string) (InstallState, error) {
 	if err != nil {
 		return s.InstallSnapshot(), err
 	}
+	if layer != "" && pkg.Manifest().Stage != layer {
+		return s.InstallSnapshot(), &stage.Problem{Code: "wrong-layer", Detail: layer}
+	}
 	s.mu.Lock()
 	s.packages = slices.DeleteFunc(s.packages, func(p *stage.Package) bool { return p.Manifest().Stage == pkg.Manifest().Stage })
 	s.packages = append(s.packages, pkg)
-	// Space and required packages must be re-read for the newly loaded package's requirements.
-	s.installed = nil
+	delete(s.packageProblems, pkg.Manifest().Stage)
+	// Space and required packages are re-read on refresh; loading a file changes no layer.
 	s.mu.Unlock()
 	return s.emitInstall(), nil
 }
@@ -196,7 +229,6 @@ func (s *Service) InstallRemove(id string) (InstallState, error) {
 	defer s.configMu.Unlock()
 	s.mu.Lock()
 	s.packages = slices.DeleteFunc(s.packages, func(p *stage.Package) bool { return p.Info().ID == id })
-	s.installed = nil
 	s.mu.Unlock()
 	return s.emitInstall(), nil
 }
@@ -207,18 +239,58 @@ func (s *Service) InstallStart(ctx context.Context, req stage.Request) (InstallS
 	if !s.configMu.TryLock() {
 		return s.InstallSnapshot(), ErrDeviceBusy
 	}
-	p, err := s.inspectInstall(ctx)
+	p, err := s.inspectInstall(ctx, req.Choice)
 	if err != nil {
 		s.configMu.Unlock()
 		return s.emitInstall(), err
 	}
 	s.mu.Lock()
-	packages, facts := slices.Clone(s.packages), *s.installed
+	packages, facts := choicePackages(p, s.packages, req.Choice), *s.installed
+	var selected *stage.Choice
+	for _, c := range stage.BuildChoices(p, facts, preparedPackages{stage.PackageSet(packages), s.packageProblems}, req.Downgrade) {
+		if c.ID == req.Choice {
+			selected = &c
+			break
+		}
+	}
+	var problem *stage.Problem
+	if selected == nil {
+		problem = &stage.Problem{Code: "bad-choice", Detail: req.Choice}
+	} else if selected.Problem != nil {
+		problem = selected.Problem
+	} else if !selected.Ready {
+		for _, need := range selected.Needs {
+			if need.Problem != nil {
+				problem = need.Problem
+				break
+			}
+			if !need.Ready {
+				problem = &stage.Problem{Code: "no-package", Detail: need.Layer}
+				break
+			}
+		}
+	}
+	if problem != nil {
+		s.mu.Unlock()
+		s.configMu.Unlock()
+		return s.emitInstall(), problem
+	}
 	plan := stage.BuildPlan(p, facts, packages, req)
 	if plan.Problem != nil {
 		s.mu.Unlock()
 		s.configMu.Unlock()
 		return s.emitInstall(), plan.Problem
+	}
+	// Acquire before publishing a running job or executing any device write.
+	inhibitor := s.sleepInhibitor
+	if inhibitor == nil {
+		inhibitor = power.Noop{}
+	}
+	release, err := inhibitor.Acquire()
+	if err != nil {
+		s.mu.Unlock()
+		s.configMu.Unlock()
+		return s.emitInstall(), &stage.Problem{Code: "keep-awake", Detail: err.Error()}
 	}
 	life := s.lifeCtx
 	if life == nil {
@@ -232,6 +304,7 @@ func (s *Service) InstallStart(ctx context.Context, req stage.Request) (InstallS
 		initial.Steps = append(initial.Steps, stage.StepProgress{Step: step, Status: "pending"})
 	}
 	s.installJob = &initial
+	s.installStale = true
 	s.mu.Unlock()
 	executor := stage.NewExecutor(p, packages)
 	if s.newExecutor != nil {
@@ -267,11 +340,17 @@ func (s *Service) InstallStart(ctx context.Context, req stage.Request) (InstallS
 		return d, err
 	}
 	executor.Emit = func(job stage.Job) {
+		// The executor logs a failure before attempting its final readback. Keep the warning
+		// and close guard armed until that readback has finished, too.
+		if job.Finished.IsZero() {
+			job.Status = "running"
+		}
 		s.mu.Lock()
 		s.installJob = &job
 		if job.Installed != nil {
 			s.installed = job.Installed
 		}
+		s.installStale = job.Status == "running" || !job.Observed
 		s.mu.Unlock()
 		s.emitInstall()
 	}
@@ -280,9 +359,50 @@ func (s *Service) InstallStart(ctx context.Context, req stage.Request) (InstallS
 		defer close(done)
 		defer cancel()
 		defer s.configMu.Unlock()
+		defer release()
 		executor.Run(jobCtx, plan)
 	}()
 	return state, nil
+}
+
+type preparedPackages struct {
+	stage.PackageSet
+	problems map[string]*stage.Problem
+}
+
+func (p preparedPackages) ForLayer(layer string) (*stage.Package, *stage.Problem) {
+	pkg, problem := p.PackageSet.ForLayer(layer)
+	if problem == nil && pkg != nil {
+		problem = p.problems[layer]
+	}
+	return pkg, problem
+}
+
+// choicePackages also isolates final BuildPlan and device inspection from unrelated payloads.
+func choicePackages(p profile.Profile, packages []*stage.Package, id string) []*stage.Package {
+	var needs []string
+	for _, def := range stage.ChoiceDefinitions(p) {
+		if def.ID == id {
+			needs = def.Needs
+			break
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(packages), func(pkg *stage.Package) bool {
+		return !slices.Contains(needs, pkg.Manifest().Stage)
+	})
+}
+
+func (s *Service) InstallRunning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.installJob != nil && s.installJob.Status == "running"
+}
+
+// SetSleepInhibitor is shell wiring; tests and platforms without power APIs use the no-op.
+func (s *Service) SetSleepInhibitor(inhibitor power.Inhibitor) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sleepInhibitor = inhibitor
 }
 
 // InstallWait is the CLI's wait on the same job the GUI follows through events.

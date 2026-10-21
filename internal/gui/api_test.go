@@ -36,7 +36,7 @@ func (f *fakeNative) SaveFile(string, []byte) (string, error) { return "", errNo
 
 func (f *fakeNative) OpenFile() (string, []byte, error) { return "", nil, errNoDialogs }
 
-func (f *fakeNative) OpenPackages() ([]string, error) { return nil, errNoDialogs }
+func (f *fakeNative) OpenPackages(string) ([]string, error) { return nil, errNoDialogs }
 
 type fixture struct {
 	handler  http.Handler

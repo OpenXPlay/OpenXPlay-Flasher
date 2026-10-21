@@ -12,6 +12,7 @@ var helpLinks = map[string]Links{
 		Website:  "https://openxplay.org/en/",
 		Tutorial: "https://openxplay.org/en/ufi003-relay#flasher",
 		Download: "https://openxplay.org/en/ufi003-relay#flasher-download",
+		Manual:   "https://openxplay.org/en/ufi003-flash",
 		Source:   version.SourceURL,
 		Issues:   version.SourceURL + "/issues",
 	},
@@ -19,6 +20,7 @@ var helpLinks = map[string]Links{
 		Website:  "https://openxplay.org/",
 		Tutorial: "https://openxplay.org/ufi003-relay#flasher",
 		Download: "https://openxplay.org/ufi003-relay#flasher-download",
+		Manual:   "https://openxplay.org/ufi003-flash",
 		Source:   version.SourceURL,
 		Issues:   version.SourceURL + "/issues",
 	},
@@ -28,6 +30,7 @@ type Links struct {
 	Website  string `json:"website"`
 	Tutorial string `json:"tutorial"`
 	Download string `json:"download"`
+	Manual   string `json:"manual"`
 	Source   string `json:"source"`
 	Issues   string `json:"issues"`
 }

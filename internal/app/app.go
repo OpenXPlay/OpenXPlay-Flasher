@@ -14,6 +14,7 @@ import (
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/config"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/power"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
@@ -34,20 +35,23 @@ type Service struct {
 	events   Events
 	interval time.Duration
 
-	mu             sync.Mutex
-	current        device.Snapshot
-	cancel         context.CancelFunc
-	done           chan struct{}
-	adb            adb.Connector
-	lifeCtx        context.Context
-	packages       []*stage.Package
-	installTarget  *InstallTarget
-	installed      *stage.Facts
-	installProblem *stage.Problem
-	installJob     *stage.Job
-	installCancel  context.CancelFunc
-	installDone    chan struct{}
-	newExecutor    func(profile.Profile, []*stage.Package) *stage.Executor
+	mu              sync.Mutex
+	current         device.Snapshot
+	cancel          context.CancelFunc
+	done            chan struct{}
+	adb             adb.Connector
+	lifeCtx         context.Context
+	packages        []*stage.Package
+	packageProblems map[string]*stage.Problem
+	installTarget   *InstallTarget
+	installed       *stage.Facts
+	installStale    bool
+	sleepInhibitor  power.Inhibitor
+	installProblem  *stage.Problem
+	installJob      *stage.Job
+	installCancel   context.CancelFunc
+	installDone     chan struct{}
+	newExecutor     func(profile.Profile, []*stage.Package) *stage.Executor
 
 	// configMu serialises configuration operations and holds the device for an entire install.
 	configMu sync.Mutex

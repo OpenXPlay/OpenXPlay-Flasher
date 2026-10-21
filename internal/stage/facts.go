@@ -7,6 +7,7 @@ package stage
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -74,34 +75,8 @@ func Inspect(ctx context.Context, run Run, p profile.Profile, packages []*Packag
 		names = append(names, pkg.manifest.Requires.Packages...)
 		dirs = append(dirs, pkg.manifest.DeviceDir)
 	}
-	slices.Sort(names)
-	names = slices.Compact(names)
-	for _, name := range names {
-		if !debName.MatchString(name) {
-			return f, fmt.Errorf("invalid package name: %s", name)
-		}
-		cmd := "dpkg-query -W -f '${db:Status-Status}\\t${Version}' " + quote(name)
-		r, err := run(ctx, cmd)
-		if err != nil {
-			return f, err
-		}
-		switch r.ExitCode {
-		case 0:
-			status, version, ok := strings.Cut(strings.TrimRight(string(r.Stdout), "\r\n"), "\t")
-			if !ok {
-				return f, fmt.Errorf("invalid dpkg-query response for %s", name)
-			}
-			if status == "installed" {
-				if !validVersion(version) {
-					return f, fmt.Errorf("invalid installed version for %s", name)
-				}
-				f.Packages[name] = version
-			}
-		case 1:
-			// dpkg-query returns 1 when a package is not installed.
-		default:
-			return f, fmt.Errorf("dpkg-query %s: exit %d", name, r.ExitCode)
-		}
+	if err := readPackages(ctx, run, names, f.Packages); err != nil {
+		return f, err
 	}
 	for _, l := range p.Layers {
 		f.Layers[l.ID] = f.Packages[l.Package]
@@ -116,23 +91,83 @@ func Inspect(ctx context.Context, run Run, p profile.Profile, packages []*Packag
 	if kernel != "" && model != "" && f.KernelRelease == kernel && f.DeviceTreeModel == model {
 		f.Layers["base"] = f.KernelRelease
 	}
+	if err := readSpace(ctx, run, dirs, f.FreeKiB); err != nil {
+		return f, err
+	}
+	return f, nil
+}
+
+// InspectPackageRequirements augments a successful profile-only observation. The service records
+// an error against this package's need, so one unavailable package requirement cannot gate Choose
+// or an unrelated layer. The executor still uses Inspect for all of its own final checks.
+func InspectPackageRequirements(ctx context.Context, run Run, f Facts, pkg *Package) (Facts, error) {
+	f.Packages, f.FreeKiB = maps.Clone(f.Packages), maps.Clone(f.FreeKiB)
+	if f.Packages == nil {
+		f.Packages = map[string]string{}
+	}
+	if f.FreeKiB == nil {
+		f.FreeKiB = map[string]int64{}
+	}
+	if err := readPackages(ctx, run, slices.Clone(pkg.manifest.Requires.Packages), f.Packages); err != nil {
+		return f, err
+	}
+	if err := readSpace(ctx, run, []string{pkg.manifest.DeviceDir}, f.FreeKiB); err != nil {
+		return f, err
+	}
+	return f, nil
+}
+
+func readPackages(ctx context.Context, run Run, names []string, versions map[string]string) error {
+	slices.Sort(names)
+	names = slices.Compact(names)
+	for _, name := range names {
+		if !debName.MatchString(name) {
+			return fmt.Errorf("invalid package name: %s", name)
+		}
+		cmd := "dpkg-query -W -f '${db:Status-Status}\\t${Version}' " + quote(name)
+		r, err := run(ctx, cmd)
+		if err != nil {
+			return err
+		}
+		switch r.ExitCode {
+		case 0:
+			status, version, ok := strings.Cut(strings.TrimRight(string(r.Stdout), "\r\n"), "\t")
+			if !ok {
+				return fmt.Errorf("invalid dpkg-query response for %s", name)
+			}
+			if status == "installed" {
+				if !validVersion(version) {
+					return fmt.Errorf("invalid installed version for %s", name)
+				}
+				versions[name] = version
+			}
+		case 1:
+			// dpkg-query returns 1 when a package is not installed.
+		default:
+			return fmt.Errorf("dpkg-query %s: exit %d", name, r.ExitCode)
+		}
+	}
+	return nil
+}
+
+func readSpace(ctx context.Context, run Run, dirs []string, free map[string]int64) error {
 	slices.Sort(dirs)
 	for _, dir := range slices.Compact(dirs) {
 		cmd := "d=" + quote(dir) + `; while [ ! -d "$d" ]; do d=${d%/*}; [ -n "$d" ] || d=/; done; df -Pk "$d"`
 		r, err := run(ctx, cmd)
 		if err != nil {
-			return f, err
+			return err
 		}
 		lines := strings.Split(strings.TrimSpace(string(r.Stdout)), "\n")
 		parts := strings.Fields(lines[len(lines)-1])
 		if r.ExitCode != 0 || len(parts) < 4 {
-			return f, fmt.Errorf("cannot read free space for %s", dir)
+			return fmt.Errorf("cannot read free space for %s", dir)
 		}
 		space, err := strconv.ParseInt(parts[3], 10, 64)
 		if err != nil || space < 0 {
-			return f, fmt.Errorf("invalid free space for %s", dir)
+			return fmt.Errorf("invalid free space for %s", dir)
 		}
-		f.FreeKiB[dir] = space
+		free[dir] = space
 	}
-	return f, nil
+	return nil
 }

@@ -145,13 +145,13 @@ h1, h2, p { margin: 0; }
   padding: 8px 10px;
   border-top: 3px solid var(--line);
   color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
   counter-increment: step;
 }
 .steps li::before { content: counter(step) ". "; }
 .steps li.current { border-color: var(--accent); color: var(--text); font-weight: 600; }
+.steps button { border: 0; padding: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.steps li.skipped { border-top-style: dashed; }
 
 main { flex: 1; padding: 16px 28px; }
 
@@ -464,3 +464,27 @@ button:disabled { opacity: .45; cursor: default; }
 .job-steps .failed { color: var(--error); }
 #install-log summary { cursor: pointer; }
 #install-log pre { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg); padding: 12px; border-radius: 8px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+.warning { padding: 12px 14px; border: 1px solid var(--warn); border-radius: 8px; color: var(--warn); background: var(--warn-soft); }
+.flash-warning, .unplug-status { font-weight: 650; }
+.running-warning { position: sticky; top: 0; z-index: 10; border-radius: 0; font-weight: 650; }
+.running-warning[hidden] { display: none; }
+.layer-rows, .needed-packages { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.layer-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(240px, 1fr); gap: 12px; align-items: center; }
+.layer-row, .package-row, .full-choice { padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.suggested-choice { border-color: var(--accent); background: var(--accent-soft); }
+.suggested { color: var(--accent); }
+.package-row, .layer-summary, .base-guide { display: grid; gap: 8px; min-width: 0; }
+.package-row code, .package-row strong { overflow-wrap: anywhere; }
+.layer-version { color: var(--muted); overflow-wrap: anywhere; }
+.choice-steps { max-height: 240px; overflow: auto; }
+.choice-steps summary { cursor: pointer; }
+.choice-steps ol { margin-bottom: 0; }
+.install a { color: var(--accent); }
+.stale { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.needed { color: var(--warn); font-weight: 600; }
+.result .layer-summary, .error-box .layer-summary { margin-top: 10px; }
+@media (max-width: 760px) {
+  .layer-row { grid-template-columns: 1fr; }
+  .stale { align-items: start; flex-direction: column; }
+}

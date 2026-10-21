@@ -12,9 +12,9 @@ import (
 )
 
 func TestHelpLinksInBothLanguagesAreOpenable(t *testing.T) {
-	want := map[string][2]string{
-		LangEnglish: {"https://openxplay.org/en/ufi003-relay#flasher", "https://openxplay.org/en/ufi003-relay#flasher-download"},
-		LangChinese: {"https://openxplay.org/ufi003-relay#flasher", "https://openxplay.org/ufi003-relay#flasher-download"},
+	want := map[string][3]string{
+		LangEnglish: {"https://openxplay.org/en/ufi003-relay#flasher", "https://openxplay.org/en/ufi003-relay#flasher-download", "https://openxplay.org/en/ufi003-flash"},
+		LangChinese: {"https://openxplay.org/ufi003-relay#flasher", "https://openxplay.org/ufi003-relay#flasher-download", "https://openxplay.org/ufi003-flash"},
 	}
 	if len(helpLinks) != len(want) {
 		t.Fatalf("help link languages = %v", helpLinks)
@@ -22,11 +22,11 @@ func TestHelpLinksInBothLanguagesAreOpenable(t *testing.T) {
 	f := newFixture(t)
 	for lang, urls := range want {
 		links, ok := helpLinks[lang]
-		if !ok || linksFor(lang) != links || links.Tutorial != urls[0] || links.Download != urls[1] ||
+		if !ok || linksFor(lang) != links || links.Tutorial != urls[0] || links.Download != urls[1] || links.Manual != urls[2] ||
 			links.Issues != "https://github.com/OpenXPlay/OpenXPlay-Flasher/issues" {
 			t.Fatalf("%s links = %+v", lang, links)
 		}
-		for _, url := range []string{links.Website, links.Tutorial, links.Download, links.Source, links.Issues} {
+		for _, url := range []string{links.Website, links.Tutorial, links.Download, links.Manual, links.Source, links.Issues} {
 			if url == "" || !canOpen(url) {
 				t.Errorf("%s URL %q is not openable", lang, url)
 			}

@@ -27,6 +27,8 @@ function usedStrings() {
     if (m[2]) out.add(m[2]);
   }
   for (const m of nativeEnglish.matchAll(/\b(?:Settings|Tutorial|Download): "([^"]+)"/g)) out.add(m[1]);
+  const nativeQuit = nativeText.slice(nativeText.indexOf('return quitText{Warning: "Flashing'), nativeText.indexOf('// siteURL'));
+  for (const m of nativeQuit.matchAll(/\b(?:Warning|Keep|Quit): "([^"]+)"/g)) out.add(m[1]);
   return out;
 }
 
@@ -49,6 +51,15 @@ test("translations keep their placeholders", () => {
 test("new native menu labels match the page translations", () => {
   for (const key of ["Settings", "Tutorial", "Download"]) {
     const labels = [...nativeText.matchAll(new RegExp("\\b" + key + ': "([^"]+)"', "g"))].map((m) => m[1]);
+    assert.equal(labels.length, 2, key);
+    assert.equal(ZH[labels[1]], labels[0], key);
+  }
+});
+
+test("native quit warnings and buttons match the page translations", () => {
+  const section = nativeText.slice(nativeText.indexOf("func quitStrings"), nativeText.indexOf("// siteURL"));
+  for (const key of ["Warning", "Keep", "Quit"]) {
+    const labels = [...section.matchAll(new RegExp("\\b" + key + ': "([^"]+)"', "g"))].map((m) => m[1]);
     assert.equal(labels.length, 2, key);
     assert.equal(ZH[labels[1]], labels[0], key);
   }

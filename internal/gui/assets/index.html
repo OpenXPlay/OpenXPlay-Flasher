@@ -13,6 +13,7 @@ Created by riko chen on 2026-10-20
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+  <div id="install-running-warning" class="warning running-warning" role="alert" hidden></div>
   <header class="top">
     <img class="logo" src="/logo.png" alt="" width="40" height="40">
     <div class="title">
@@ -34,16 +35,16 @@ Created by riko chen on 2026-10-20
 
   <div id="view-install">
   <ol class="steps" aria-label="Steps" data-ta="Steps">
-    <li class="current" data-t="Connect">Connect</li>
-    <li data-t="Choose">Choose</li>
-    <li data-t="Prepare">Prepare</li>
-    <li data-t="Back up (not needed)">Back up (not needed)</li>
+    <li class="current"><button type="button" data-install-step="0" data-t="Connect">Connect</button></li>
+    <li><button type="button" data-install-step="1" data-t="Choose" disabled>Choose</button></li>
+    <li><button type="button" data-install-step="2" data-t="Prepare" disabled>Prepare</button></li>
+    <li data-t="Back up">Back up</li>
     <li data-t="Flash">Flash</li>
     <li data-t="Done">Done</li>
   </ol>
 
   <main>
-    <section class="card" aria-live="polite">
+    <section id="install-connect" class="card" aria-live="polite">
       <h2 data-t="Connect your device">Connect your device</h2>
       <div id="devices" class="devices"></div>
     </section>

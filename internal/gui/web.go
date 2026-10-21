@@ -18,6 +18,7 @@ import (
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/power"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 )
 
@@ -32,7 +33,7 @@ func (webNative) SaveFile(string, []byte) (string, error) { return "", errNoDial
 
 func (webNative) OpenFile() (string, []byte, error) { return "", nil, errNoDialogs }
 
-func (webNative) OpenPackages() ([]string, error) { return nil, errNoDialogs }
+func (webNative) OpenPackages(string) ([]string, error) { return nil, errNoDialogs }
 
 // SetLang: the page titles the browser tab itself, and a browser has no app menu.
 func (webNative) SetLang(string) {}
@@ -59,6 +60,7 @@ func ServeWeb(ctx context.Context, addr string, out io.Writer) error {
 		return err
 	}
 	svc.SetADB(adb.NewConnector())
+	svc.SetSleepInhibitor(power.NewSystem())
 	svc.Start(ctx)
 	defer svc.Stop()
 

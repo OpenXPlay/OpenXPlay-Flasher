@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,21 +27,48 @@ import (
 )
 
 type installDevice struct {
-	mu      sync.Mutex
-	version string
-	data    []byte
-	pushes  int
-	started chan struct{}
-	release chan struct{}
-	onClock func()
+	mu               sync.Mutex
+	version          string
+	data             []byte
+	pushes           int
+	started          chan struct{}
+	release          chan struct{}
+	onClock          func()
+	deviceMissing    bool
+	noBase           bool
+	failInstall      bool
+	failInspect      bool
+	failPackageFacts bool
+	readbackStarted  chan struct{}
+	readbackRelease  chan struct{}
 }
 
 func (d *installDevice) Shell(ctx context.Context, cmd string) (adb.Result, error) {
 	switch {
 	case strings.Contains(cmd, "uname -r"):
-		return adb.Result{Stdout: []byte("root\t0\nkernel\t5.15.0-handsomekernel+\nmodel\tHandsome Openstick\ndebian\t11\narch\tarm64\n")}, nil
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if d.failInspect {
+			if d.readbackStarted != nil {
+				close(d.readbackStarted)
+				d.readbackStarted = nil
+				select {
+				case <-d.readbackRelease:
+				case <-ctx.Done():
+				}
+			}
+			return adb.Result{}, errors.New("fake device unavailable")
+		}
+		out := "root\t0\nkernel\t5.15.0-handsomekernel+\nmodel\tHandsome Openstick\ndebian\t11\narch\tarm64\n"
+		if d.noBase {
+			out = strings.ReplaceAll(out, "5.15.0-handsomekernel+", "stock-kernel")
+		}
+		return adb.Result{Stdout: []byte(out)}, nil
 	case strings.HasPrefix(cmd, "dpkg-query "):
 		version := "1.0"
+		if strings.HasSuffix(cmd, "'openxplay-ufi003'") && d.deviceMissing {
+			version = ""
+		}
 		if strings.HasSuffix(cmd, "'openxplay-relay'") {
 			d.mu.Lock()
 			version = d.version
@@ -51,6 +79,9 @@ func (d *installDevice) Shell(ctx context.Context, cmd string) (adb.Result, erro
 		}
 		return adb.Result{Stdout: []byte("installed\t" + version)}, nil
 	case strings.Contains(cmd, "df -Pk"):
+		if d.failPackageFacts && strings.Contains(cmd, "/var/cache/openxplay/relay") {
+			return adb.Result{}, errors.New("fake package cache unavailable")
+		}
 		return adb.Result{Stdout: []byte("Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/root 1000000 200000 800000 20% /\n")}, nil
 	case strings.HasPrefix(cmd, "date -u -s"):
 		if d.onClock != nil {
@@ -71,6 +102,11 @@ func (d *installDevice) Shell(ctx context.Context, cmd string) (adb.Result, erro
 			}
 		}
 		d.mu.Lock()
+		if d.failInstall {
+			d.failInspect = true
+			d.mu.Unlock()
+			return adb.Result{}, errors.New("fake interrupted install")
+		}
 		d.version = "0.1.5~beta.1"
 		d.mu.Unlock()
 		return adb.Result{Stdout: []byte("OXP-STAGE relay ok version=0.1.5~beta.1\n")}, nil
@@ -102,9 +138,13 @@ type packageNative struct {
 	*fakeNative
 	paths []string
 	saved []byte
+	layer string
 }
 
-func (n *packageNative) OpenPackages() ([]string, error) { return n.paths, nil }
+func (n *packageNative) OpenPackages(layer string) ([]string, error) {
+	n.layer = layer
+	return n.paths, nil
+}
 func (n *packageNative) SaveFile(_ string, b []byte) (string, error) {
 	n.saved = b
 	return "saved.log", nil
@@ -182,7 +222,7 @@ func TestInstallPackageAndJobRoutes(t *testing.T) {
 	if state.Problem != nil || state.Target.Profile != "ufi003" || state.Installed.Layers["base"] == "" || len(state.Packages) != 1 || state.Packages[0].Version != "0.1.5-beta.1" {
 		t.Fatalf("state=%+v", state)
 	}
-	if state.Choices[0].Problem != nil || state.Choices[1].Problem.Code != "no-package" {
+	if state.Choices[0].Problem != nil || state.Choices[0].Ready || state.Choices[1].Problem != nil || state.Choices[1].Needs[0].Status != "missing" || !state.Choices[2].Ready {
 		t.Fatalf("choices=%v", state.Choices)
 	}
 	rec := f.do("POST", "/api/install/start", `{"choice":"relay","downgrade":false}`)
@@ -213,7 +253,7 @@ func TestInstallPackageAndJobRoutes(t *testing.T) {
 		t.Fatal("package not removed")
 	}
 	native.paths = []string{manifest, deb}
-	if rec := f.do("POST", "/api/install/pick", `{}`); rec.Code != http.StatusOK {
+	if rec := f.do("POST", "/api/install/pick", `{"layer":"relay"}`); rec.Code != http.StatusOK {
 		t.Fatalf("picker=%d %s", rec.Code, rec.Body)
 	}
 	if len(installState(t, f).Packages) != 1 {
@@ -303,5 +343,208 @@ func TestInstallMutationsNeedJSON(t *testing.T) {
 		if rec := f.do("POST", route, ""); rec.Code != http.StatusUnsupportedMediaType {
 			t.Fatalf("%s without JSON=%d", route, rec.Code)
 		}
+	}
+}
+
+func TestLayerChoiceAPIWithoutPackages(t *testing.T) {
+	for _, tc := range []struct {
+		name                                     string
+		deviceMissing, relayMissing, baseMissing bool
+		suggested, relayProblem                  string
+	}{
+		{"base only", true, true, false, "full", "below-missing"},
+		{"device only", false, true, false, "full", ""},
+		{"all installed", false, false, false, "relay", ""},
+		{"relay without device", true, false, false, "full", "below-missing"},
+		{"base missing", false, false, true, "", "base-missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, _, dev, _ := installFixture(t, true)
+			dev.deviceMissing, dev.noBase = tc.deviceMissing, tc.baseMissing
+			if tc.relayMissing {
+				dev.version = ""
+			}
+			s := installState(t, f)
+			if len(s.Layers) != 3 || len(s.Choices) != 3 || s.Suggested != tc.suggested || len(s.Packages) != 0 {
+				t.Fatalf("state=%+v", s)
+			}
+			if s.Layers[0].Action != "guide" || s.Layers[0].Choice != "" || s.Layers[0].Name["zh-CN"] == "" {
+				t.Fatalf("base=%+v", s.Layers[0])
+			}
+			for _, c := range s.Choices {
+				if c.Ready || len(c.Needs) == 0 || len(c.Steps) == 0 {
+					t.Fatalf("choice=%+v", c)
+				}
+				if tc.baseMissing && c.Problem.Code != "base-missing" {
+					t.Fatalf("choice=%+v", c)
+				}
+				if !tc.baseMissing && c.ID != "relay" && c.Problem != nil {
+					t.Fatalf("package gated choice=%+v", c)
+				}
+			}
+			row := s.Layers[2]
+			if tc.relayProblem != "" && (row.Enabled || row.Reason.Code != tc.relayProblem) {
+				t.Fatalf("relay=%+v", row)
+			}
+			if rec := f.do("POST", "/api/install/start", `{"choice":"full"}`); rec.Code != http.StatusConflict {
+				t.Fatalf("unready start=%d %s", rec.Code, rec.Body)
+			}
+			if dev.pushes != 0 {
+				t.Fatal("unready choice wrote a payload")
+			}
+		})
+	}
+}
+
+func TestFullInstallRequiresEveryDeclaredNeed(t *testing.T) {
+	f, _, _, _, native := installFixture(t, true)
+	deb, _ := relayFiles(t)
+	native.paths = []string{deb}
+	if rec := f.do("POST", "/api/install/pick", `{"layer":"relay"}`); rec.Code != http.StatusOK || native.layer != "relay" {
+		t.Fatalf("picker=%d %s layer=%s", rec.Code, rec.Body, native.layer)
+	}
+	s := installState(t, f)
+	if len(s.Choices[0].Needs) != 2 || s.Choices[0].Ready || !s.Choices[2].Ready || s.Choices[0].Problem != nil {
+		t.Fatalf("choices=%+v", s.Choices)
+	}
+	if rec := f.do("POST", "/api/install/start", `{"choice":"full"}`); rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != "no-package" {
+		t.Fatalf("partial full=%d %s", rec.Code, rec.Body)
+	}
+	if rec := f.do("POST", "/api/install/pick", `{}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing layer=%d", rec.Code)
+	}
+	native.layer = ""
+	if rec := f.do("POST", "/api/install/pick", `{"layer":"device"}`); rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != "wrong-layer" || native.layer != "device" {
+		t.Fatalf("wrong layer=%d %s", rec.Code, rec.Body)
+	}
+	if len(s.Choices[1].Needs[0].FileTypes) != 1 || s.Choices[1].Needs[0].FileTypes[0] != ".tar.gz" || len(s.Choices[2].Needs[0].FileTypes) != 2 {
+		t.Fatal("picker file types do not match needs")
+	}
+}
+
+type fakeInhibitor struct {
+	acquired, released atomic.Int32
+	err                error
+}
+
+func (p *fakeInhibitor) Acquire() (func(), error) {
+	p.acquired.Add(1)
+	if p.err != nil {
+		return nil, p.err
+	}
+	return func() { p.released.Add(1) }, nil
+}
+
+func TestJobKeepsAwakeUntilSuccessFailureOrCancellation(t *testing.T) {
+	for _, end := range []string{"success", "failure", "cancel"} {
+		t.Run(end, func(t *testing.T) {
+			f, svc, _, dev, _ := installFixture(t, true)
+			deb, _ := relayFiles(t)
+			dev.started, dev.release = make(chan struct{}), make(chan struct{})
+			dev.failInstall = end == "failure"
+			p := &fakeInhibitor{}
+			svc.SetSleepInhibitor(p)
+			f.do("POST", "/api/install/packages", bodyPath(deb))
+			if rec := f.do("POST", "/api/install/start", `{"choice":"relay"}`); rec.Code != http.StatusAccepted {
+				t.Fatalf("start=%d %s", rec.Code, rec.Body)
+			}
+			select {
+			case <-dev.started:
+			case <-time.After(2 * time.Second):
+				t.Fatal("job did not start")
+			}
+			if !svc.InstallRunning() || p.acquired.Load() != 1 || p.released.Load() != 0 || !svc.InstallSnapshot().InstalledStale {
+				t.Fatal("running job not protected")
+			}
+			if end == "cancel" {
+				svc.Stop()
+			} else {
+				close(dev.release)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			s, err := svc.InstallWait(ctx)
+			if err != nil || svc.InstallRunning() || p.released.Load() != 1 {
+				t.Fatalf("release=%d running=%v err=%v", p.released.Load(), svc.InstallRunning(), err)
+			}
+			if end == "success" && (s.Job.Status != "succeeded" || s.InstalledStale) {
+				t.Fatalf("success=%+v", s)
+			}
+			if end == "failure" {
+				if s.Job.Status != "failed" || s.Job.Left != "partial" || s.Job.Observed || !s.InstalledStale {
+					t.Fatalf("failure=%+v", s)
+				}
+				// A failed read retains the same explicitly stale upper summary.
+				if again := installState(t, f); !again.InstalledStale || again.Installed == nil || again.Problem == nil {
+					t.Fatalf("stale read=%+v", again)
+				}
+				dev.mu.Lock()
+				dev.failInspect = false
+				dev.version = "0.1.5~beta.1"
+				dev.mu.Unlock()
+				if again := installState(t, f); again.InstalledStale || again.Installed.Layers["relay"] != "0.1.5~beta.1" {
+					t.Fatalf("fresh read=%+v", again)
+				}
+			}
+		})
+	}
+}
+
+func TestKeepAwakeFailureRefusesStart(t *testing.T) {
+	f, svc, _, dev, _ := installFixture(t, true)
+	deb, _ := relayFiles(t)
+	p := &fakeInhibitor{err: errors.New("fake assertion failure")}
+	svc.SetSleepInhibitor(p)
+	f.do("POST", "/api/install/packages", bodyPath(deb))
+	if rec := f.do("POST", "/api/install/start", `{"choice":"relay"}`); rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != "keep-awake" {
+		t.Fatalf("start=%d %s", rec.Code, rec.Body)
+	}
+	if svc.InstallRunning() || dev.pushes != 0 || p.acquired.Load() != 1 || p.released.Load() != 0 {
+		t.Fatal("assertion failure started a job")
+	}
+}
+
+func TestPackageRequirementReadFailureDoesNotGateChoose(t *testing.T) {
+	f, _, _, dev, _ := installFixture(t, true)
+	deb, _ := relayFiles(t)
+	dev.failPackageFacts = true
+	f.do("POST", "/api/install/packages", bodyPath(deb))
+	s := installState(t, f)
+	if s.Problem != nil || s.Installed == nil || s.InstalledStale {
+		t.Fatalf("package affected discovery=%+v", s)
+	}
+	for _, c := range s.Choices {
+		if c.Problem != nil {
+			t.Fatalf("package gated choose=%+v", c)
+		}
+	}
+	if !s.Layers[2].Enabled || s.Choices[2].Ready || s.Choices[2].Needs[0].Problem == nil {
+		t.Fatalf("relay=%+v", s.Choices[2])
+	}
+	if rec := f.do("POST", "/api/install/start", `{"choice":"relay"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("unusable start=%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestCloseGuardStaysArmedThroughFailureReadback(t *testing.T) {
+	f, svc, _, dev, _ := installFixture(t, true)
+	deb, _ := relayFiles(t)
+	dev.failInstall = true
+	readback := make(chan struct{})
+	dev.readbackStarted, dev.readbackRelease = readback, make(chan struct{})
+	defer close(dev.readbackRelease)
+	p := &fakeInhibitor{}
+	svc.SetSleepInhibitor(p)
+	f.do("POST", "/api/install/packages", bodyPath(deb))
+	if rec := f.do("POST", "/api/install/start", `{"choice":"relay"}`); rec.Code != http.StatusAccepted {
+		t.Fatalf("start=%d %s", rec.Code, rec.Body)
+	}
+	select {
+	case <-readback:
+	case <-time.After(2 * time.Second):
+		t.Fatal("failure readback not reached")
+	}
+	if !svc.InstallRunning() || svc.InstallSnapshot().Job.Status != "running" || p.released.Load() != 0 {
+		t.Fatal("warning and guard ended before readback")
 	}
 }

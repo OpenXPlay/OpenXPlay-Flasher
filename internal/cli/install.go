@@ -39,9 +39,9 @@ func runInstall(svc *app.Service, files []string, only string, downgrade, yes bo
 		}
 	}
 	state := svc.Install(ctx)
-	var plan stage.Plan
+	var plan stage.Choice
 	for _, p := range state.Choices {
-		if p.Choice == choice {
+		if p.ID == choice {
 			plan = p
 		}
 	}
@@ -52,6 +52,16 @@ func runInstall(svc *app.Service, files []string, only string, downgrade, yes bo
 	if plan.Problem != nil {
 		printPlanProblem(stderr, plan.Problem)
 		return 1
+	}
+	for _, need := range plan.Needs {
+		if need.Problem != nil && need.Problem.Code != "downgrade" {
+			printPlanProblem(stderr, need.Problem)
+			return 1
+		}
+		if need.Package == nil {
+			printPlanProblem(stderr, &stage.Problem{Code: "no-package", Detail: need.Layer})
+			return 1
+		}
 	}
 	fmt.Fprintln(stdout, "Install plan:")
 	for i, step := range plan.Steps {

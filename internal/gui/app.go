@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -21,6 +22,8 @@ import (
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/config"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/power"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/version"
 )
@@ -39,7 +42,10 @@ func runtimeIcon() []byte {
 
 // host is the Wails application: it owns the window and implements Native.
 type host struct {
-	app *application.App
+	app   *application.App
+	guard *closeGuard
+	mu    sync.Mutex
+	lang  string
 }
 
 func (h *host) OpenURL(url string) error {
@@ -49,6 +55,9 @@ func (h *host) OpenURL(url string) error {
 // SetLang applies the UI language to the native parts: the window title (Wails does not follow
 // the page's document.title) and, on macOS, the menu bar.
 func (h *host) SetLang(lang string) {
+	h.mu.Lock()
+	h.lang = lang
+	h.mu.Unlock()
 	application.InvokeAsync(func() {
 		if w, ok := h.app.Window.GetByName("main"); ok {
 			w.SetTitle(appTitle(lang))
@@ -57,6 +66,17 @@ func (h *host) SetLang(lang string) {
 			h.app.Menu.Set(macMenu(lang, h.openInBrowser, h.showSettings))
 		}
 	})
+}
+
+func (h *host) confirmQuit(answer func(bool)) {
+	h.mu.Lock()
+	lang := h.lang
+	h.mu.Unlock()
+	s := quitStrings(lang)
+	dialog := h.app.Dialog.Warning().SetTitle(appTitle(lang)).SetMessage(s.Warning)
+	dialog.AddButton(s.Keep).SetAsDefault().SetAsCancel().OnClick(func() { answer(false) })
+	dialog.AddButton(s.Quit).OnClick(func() { answer(true) })
+	dialog.Show()
 }
 
 func (h *host) SaveFile(name string, data []byte) (string, error) {
@@ -83,9 +103,13 @@ func (h *host) OpenFile() (string, []byte, error) {
 	return filepath.Base(src), data, err
 }
 
-func (h *host) OpenPackages() ([]string, error) {
+func (h *host) OpenPackages(layer string) ([]string, error) {
+	patterns := stage.PackageFileTypes(layer)
+	for i := range patterns {
+		patterns[i] = "*" + patterns[i]
+	}
 	return h.app.Dialog.OpenFile().CanChooseFiles(true).
-		AddFilter("*.tar.gz, *.deb, *.json", "*.tar.gz;*.deb;*.json").PromptForMultipleSelection()
+		AddFilter(strings.Join(patterns, ", "), strings.Join(patterns, ";")).PromptForMultipleSelection()
 }
 
 func (h *host) openInBrowser(url string) {
@@ -117,10 +141,12 @@ func Run() error {
 		return err
 	}
 	svc.SetADB(adb.NewConnector())
+	svc.SetSleepInhibitor(power.NewSystem())
 	settings := NewSettingsStore(dir)
 	sysLang := systemLang()
 	lang := UILang(settings.Load().Lang, sysLang)
-	h := &host{}
+	h := &host{lang: lang}
+	h.guard = &closeGuard{running: svc.InstallRunning, prompt: h.confirmQuit, quit: func() { h.app.Quit() }}
 
 	h.app = application.New(application.Options{
 		Name:        version.Name,
@@ -139,6 +165,7 @@ func Run() error {
 		Windows:        application.WindowsOptions{WebviewUserDataPath: filepath.Join(dir, "WebView2")},
 		SingleInstance: singleInstance(h),
 		OnShutdown:     svc.Stop,
+		ShouldQuit:     h.guard.allow,
 		// Wails exits on some webview errors unless they are handled here.
 		ErrorHandler: func(err error) { log.Println("openxplay-flasher:", err) },
 	})
@@ -161,6 +188,11 @@ func Run() error {
 		URL:              "/",
 		Hidden:           true,
 		BackgroundColour: windowBackground(h.app.Env.IsDarkMode()),
+	})
+	win.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		if !h.guard.allow() {
+			event.Cancel()
+		}
 	})
 	showWhenReady(win)
 

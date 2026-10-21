@@ -21,6 +21,7 @@ import (
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/gui"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/power"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 )
 
@@ -96,6 +97,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	svc.SetADB(adb.NewConnector())
+	svc.SetSleepInhibitor(power.NewSystem())
 
 	switch cmd {
 	case "version":
