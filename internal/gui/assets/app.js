@@ -6,7 +6,7 @@
 // it runs the same in the app window, in a browser (openxplay-flasher web) and in tests.
 
 import { t, setLang, lang, translateStatic } from "./i18n.js";
-import { deviceView, modelView, modeLabel, usbId, usbPort } from "./devices.js";
+import { deviceView, modelView, modeLabel, usbId, usbPort, deviceSummary } from "./devices.js";
 import { api, el } from "./ui.js";
 import { problemText } from "./installlogic.js";
 import * as connectionView from "./connection.js";
@@ -30,6 +30,11 @@ function status(kind, title, text) {
 }
 
 function deviceCard(c) {
+  const install = installView.snapshot();
+  const target = install?.target?.device;
+  if (target?.mode === c.mode && usbPort(target.usb) === usbPort(c.usb) && usbId(target.usb) === usbId(c.usb) && target.usb.serial === c.usb.serial) {
+    c = { ...c, serialno: target.serialno || install.identity?.serial || c.serialno };
+  }
   const model = modelView(c, state.profiles, lang());
   const rows = [
     el("dt", {}, t("Model")),
@@ -45,9 +50,9 @@ function deviceCard(c) {
       el("li", {}, [l.name, l.destructive ? el("span", { class: "tag destructive-tag" }, t("erases the device")) : ""])))));
   }
   const serial = c.serialno || c.usb.serial;
-  const install = installView.snapshot();
   const unfinished = install?.resume && !install.resume.finished && install.resume.serial === serial;
   return el("article", { class: "connected-device" }, [
+    el("strong", { class: "device-identity" }, deviceSummary(t, model.names.join(" / "), c, c.serialno)),
     c.mode === "fastboot" ? el("strong", {}, t("Bootloader (fastboot) · {product} · {serial}", { product: c.product || "—", serial: serial || "—" })) : "",
     el("dl", { class: "device-card" }, rows),
     unfinished ? el("div", { class: "warning" }, [el("p", {}, t("An earlier installation did not finish")),

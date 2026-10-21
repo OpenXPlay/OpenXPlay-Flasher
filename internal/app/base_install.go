@@ -662,7 +662,7 @@ func (s *Service) recordLinuxTarget(ctx context.Context, p profile.Profile, seri
 	}
 	identity := base.Identity{Mode: profile.ModeADB, Serial: serial, Location: c.USB.Location()}
 	s.mu.Lock()
-	s.installTarget = &InstallTarget{Device: *c, Profile: p.ID}
+	s.installTarget = &InstallTarget{Device: *c, Profile: p.ID, Name: p.Name}
 	s.baseIdentity = &identity
 	s.mu.Unlock()
 }

@@ -311,3 +311,36 @@ func TestEntireFlashIsSerialised(t *testing.T) {
 		}
 	})
 }
+
+func TestRootfsChunksReportBytesDuringDownload(t *testing.T) {
+	img := openFixture(t, bytes.Repeat([]byte{0x4b}, 5<<20))
+	limit := int64(2 << 20)
+	pieces, err := img.pieces(t.Context(), limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := []bulkStep{out("getvar:max-download-size"), in("OKAY268435456"), out("getvar:partition-size:rootfs"), in(fmt.Sprintf("OKAY%d", img.Size()))}
+	for _, piece := range pieces {
+		wire, err := io.ReadAll(piece.reader(t.Context()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		steps = append(steps, flashSteps("rootfs", wire)...)
+	}
+	client, _ := script(t, steps...)
+	partial, complete := map[int]bool{}, map[int]bool{}
+	err = client.Flash(t.Context(), "rootfs", img, FlashOptions{MaxPiece: limit}, func(e Event) {
+		if e.Phase == "sending" && e.Done > 0 && e.Done < e.Total {
+			partial[e.Piece] = true
+		}
+		if e.Phase == "sending" && e.Done == e.Total {
+			complete[e.Piece] = true
+		}
+		if e.Phase == "writing" && !complete[e.Piece] {
+			t.Error("write started before the sent-byte counter reached the chunk size")
+		}
+	})
+	if err != nil || len(partial) != len(pieces) || len(complete) != len(pieces) {
+		t.Fatalf("partial=%v complete=%v err=%v", partial, complete, err)
+	}
+}

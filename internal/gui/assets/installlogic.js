@@ -74,6 +74,12 @@ export const ERROR_TEXT = {
   "ssh-model": "This host does not match the N1 system requirements: {detail}.",
   "ssh-host-changed": "The SSH host key changed. Connection refused. Verify the box before using Forget this host.",
   "ssh-key-passphrase": "Enter the private key passphrase and connect again.",
+  "ssh-refused": "SSH connection refused: no SSH server is listening on that port. Check the port and enable SSH on the box.",
+  "ssh-timeout": "SSH timed out. Check the address and that the box is powered on. If a proxy or VPN app intercepts local connections, set this address to direct.",
+  "ssh-no-greeting": "No SSH greeting was received. Check the address and that the box is powered on. If a proxy or VPN app intercepts local connections, set this address to direct.",
+  "ssh-authentication": "SSH authentication failed. Check the user name, password or private key.",
+  "ssh-connection": "The SSH connection failed. Check the address, port and SSH service on the box.",
+  "ssh-known-hosts": "Could not read the app's stored SSH host keys. Check access to the app's data folder and try again.",
   "ssh-sudo-password-required": "sudo needs the login password. Enter it and connect again.",
   "ssh-sudo-incorrect-password": "sudo rejected the login password. Check it and try again.",
   "ssh-sudo-not-sudoer": "This user is not allowed to use sudo. Log in with a sudo user or root.",
@@ -106,7 +112,7 @@ export const ERROR_TEXT = {
   "file-changed": "This file changed after it was selected: {detail}. Choose it again before continuing.",
   "file-cancelled": "File checking cancelled: {detail}.",
   "unmatched-file": "This file is not one of the files listed here: {detail}.",
-  "catalog-unknown": "This package is not in the package list. The list includes these versions: {detail}.",
+  "catalog-unknown": "This package is not in the package list. Refused file and listed versions: {detail}.",
   "catalog-no-versions": "The package list has no versions for {detail}.",
   "identity-unrecognized": "This file is not a recognized PKCS #8 private key or PKCS #7 / CMS certificate (DER or PEM).",
   "identity-key-format": "EC PRIVATE KEY is not PKCS #8. Choose a P-256 PKCS #8 private key (PRIVATE KEY in PEM).",
@@ -297,6 +303,7 @@ export const PHASE_TEXT = {
   "system": "Write the system",
   "boot": "First boot",
   "device": "Device support",
+  "check-device": "Check device support",
   "relay": "OpenXPlay relay",
 };
 export function stepPhase(step) {
@@ -310,7 +317,8 @@ export function stepPhase(step) {
 export function phaseStyle(step) { return step?.critical ? "critical" : step?.resumable ? "resumable" : "neutral"; }
 export function phaseGroups(steps) {
   return (steps || []).reduce((groups, step) => {
-    const phase = stepPhase(step);
+    const phase = step.layer === "device" && ["verify", "installed"].includes(step.action) && groups.some((g) => g.phase === "relay")
+      ? "check-device" : stepPhase(step);
     if (groups.at(-1)?.phase !== phase) groups.push({ phase, steps: [] });
     groups.at(-1).steps.push(step);
     return groups;

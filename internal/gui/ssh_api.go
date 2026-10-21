@@ -29,12 +29,17 @@ func writeSSHError(w http.ResponseWriter, err error) bool {
 		if host.Changed {
 			code = "ssh-host-changed"
 		}
-		writeJSON(w, http.StatusConflict, map[string]any{"code": code, "host": host.Host, "fingerprint": host.Fingerprint})
+		writeJSON(w, http.StatusConflict, map[string]any{"code": code, "host": host.Host, "fingerprint": host.Fingerprint, "keyType": host.KeyType})
 		return true
 	}
 	var pass *sshdev.KeyPassphraseError
 	if errors.As(err, &pass) {
 		writeError(w, http.StatusConflict, "ssh-key-passphrase", "")
+		return true
+	}
+	var connection *sshdev.ConnectionError
+	if errors.As(err, &connection) {
+		writeError(w, http.StatusConflict, "ssh-"+connection.Kind, "")
 		return true
 	}
 	var sudo *sshdev.SudoError
@@ -46,7 +51,12 @@ func writeSSHError(w http.ResponseWriter, err error) bool {
 }
 func sshRoutes(mux *http.ServeMux, d Deps) {
 	mux.HandleFunc("GET /api/connection", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"connection": d.Service.Connection(), "recent": d.Settings.Load().RecentHosts})
+		hosts, err := d.Service.SSHStoredHosts()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "ssh-known-hosts", "")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"connection": d.Service.Connection(), "recent": d.Settings.Load().RecentHosts, "knownHosts": hosts})
 	})
 	mux.HandleFunc("POST /api/devices/select", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {

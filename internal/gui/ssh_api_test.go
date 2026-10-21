@@ -10,10 +10,12 @@ import (
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/catalog"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/testssh"
@@ -33,7 +35,7 @@ func TestSSHConnectionAPIAndSecrets(t *testing.T) {
 	}
 	body := map[string]any{"mode": "network", "host": host, "port": port, "user": "riko", "password": "api-memory-only"}
 	rec := f.do("POST", "/api/ssh/connect", jsonBody(body))
-	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "ssh-host-unknown") || !strings.Contains(rec.Body.String(), board.Server.Fingerprint()) {
+	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "ssh-host-unknown") || !strings.Contains(rec.Body.String(), board.Server.Fingerprint()) || !strings.Contains(rec.Body.String(), `"keyType":"ssh-ed25519"`) {
 		t.Fatal(rec.Code, rec.Body)
 	}
 	body["acceptHostKey"] = board.Server.Fingerprint()
@@ -45,7 +47,7 @@ func TestSSHConnectionAPIAndSecrets(t *testing.T) {
 		t.Fatal("secret in state or session log")
 	}
 	rec = f.do("GET", "/api/connection", "")
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"user":"riko"`) {
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"user":"riko"`) || !strings.Contains(rec.Body.String(), `"knownHosts":[`) || strings.Contains(rec.Body.String(), `"knownHosts":[]`) {
 		t.Fatal(rec.Body)
 	}
 	data, err := os.ReadFile(f.settings.path)
@@ -125,5 +127,68 @@ func TestSSHUSBConnectionAPI(t *testing.T) {
 	data, _ := os.ReadFile(store.path)
 	if strings.Contains(string(data), "usb-password-only-in-memory") {
 		t.Fatal("USB password persisted")
+	}
+}
+
+type failingSSHDialer struct{ err error }
+
+func (d failingSSHDialer) DialContext(context.Context, string, string) (net.Conn, error) {
+	return nil, d.err
+}
+
+func TestSSHConnectionErrorCodes(t *testing.T) {
+	f, svc, _, _, _ := installFixture(t, true)
+	dir := t.TempDir()
+	svc.ConfigureStorage(dir, filepath.Join(dir, "cache"), filepath.Join(dir, "backups"), &guiCatalog{})
+	for _, tc := range []struct {
+		code string
+		err  error
+	}{
+		{"ssh-refused", syscall.ECONNREFUSED},
+		{"ssh-timeout", context.DeadlineExceeded},
+		{"ssh-no-greeting", io.EOF},
+	} {
+		svc.SetSSHDialer(failingSSHDialer{tc.err})
+		rec := f.do("POST", "/api/ssh/connect", `{"mode":"network","host":"fake.invalid","user":"riko","password":"never-log-this"}`)
+		if rec.Code != 409 || errorCode(t, rec.Body.Bytes()) != tc.code || strings.Contains(rec.Body.String(), "never-log-this") {
+			t.Fatalf("%s: %d %s", tc.code, rec.Code, rec.Body)
+		}
+	}
+	board := testssh.NewN1(t, "correct-password")
+	host, port := board.Server.HostPort()
+	body := map[string]any{"mode": "network", "host": host, "port": port, "user": "riko", "password": "wrong-password", "acceptHostKey": board.Server.Fingerprint()}
+	svc.SetSSHDialer(nil)
+	rec := f.do("POST", "/api/ssh/connect", jsonBody(body))
+	if rec.Code != 409 || errorCode(t, rec.Body.Bytes()) != "ssh-authentication" {
+		t.Fatal(rec.Code, rec.Body)
+	}
+	if rec := f.do("POST", "/api/ssh/connect", `{"mode":"usb","user":"riko","password":"never-log-this"}`); rec.Code != 409 || errorCode(t, rec.Body.Bytes()) != "no-device" {
+		t.Fatal("USB without a gadget must not dial", rec.Code, rec.Body)
+	}
+}
+
+type sshKeyNative struct {
+	*fakeNative
+	file  string
+	calls int
+}
+
+func (n *sshKeyNative) OpenSSHKey() (string, error) { n.calls++; return n.file, nil }
+
+func TestSSHPrivateKeyNativePickerAndBrowserFallback(t *testing.T) {
+	f := newFixture(t)
+	n := &sshKeyNative{fakeNative: f.native, file: "/fake/private/id_ed25519"}
+	for _, web := range []bool{false, true} {
+		f.handler = Handler(Deps{Service: f.service, Hub: f.hub, Settings: f.settings, Native: n, Web: web})
+		rec := f.do("POST", "/api/ssh/key/pick", `{}`)
+		if !web && (rec.Code != 200 || !strings.Contains(rec.Body.String(), n.file)) {
+			t.Fatal(rec.Code, rec.Body)
+		}
+		if web && (rec.Code != 409 || errorCode(t, rec.Body.Bytes()) != "no-dialogs") {
+			t.Fatal(rec.Code, rec.Body)
+		}
+	}
+	if n.calls != 1 {
+		t.Fatal("browser mode opened a native dialog")
 	}
 }

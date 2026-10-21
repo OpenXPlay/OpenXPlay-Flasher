@@ -280,7 +280,7 @@ func (s *Service) assignFile(f *hashedFile, batch []hashedFile, choice, layer, r
 			detected, fileRole = "relay", "deb"
 		}
 		if detected != "" && allowed(detected, fileRole) {
-			f.problem = s.unknownPackageLocked(detected)
+			f.problem = s.unknownPackageLocked(detected, f.SelectedFile)
 			return
 		}
 	} else if detected != "" && allowed(detected, fileRole) {
@@ -311,7 +311,7 @@ func (s *Service) rememberFileLocked(f SelectedFile) {
 	}
 	s.artifacts[artifactKey(f.Layer, f.Role)] = stage.ArtifactNeed{Role: f.Role, Name: f.Name, Path: f.Path, Size: f.Size, SHA256: f.SHA256, Source: "selected", Done: f.Size, Total: f.Size, Verified: true, Status: "verified"}
 }
-func (s *Service) unknownPackageLocked(layer string) *stage.Problem {
+func (s *Service) unknownPackageLocked(layer string, files ...SelectedFile) *stage.Problem {
 	versions := []string{}
 	if s.catalogState.Index != nil {
 		for id, d := range s.catalogState.Index.Devices {
@@ -330,7 +330,12 @@ func (s *Service) unknownPackageLocked(layer string) *stage.Problem {
 	if len(versions) == 0 {
 		return &stage.Problem{Code: "catalog-no-versions", Detail: layer}
 	}
-	return &stage.Problem{Code: "catalog-unknown", Detail: strings.Join(versions, ", ")}
+	detail := []string{}
+	for _, f := range files {
+		detail = append(detail, fileDetail(f))
+	}
+	detail = append(detail, strings.Join(versions, ", "))
+	return &stage.Problem{Code: "catalog-unknown", Detail: strings.Join(detail, " · ")}
 }
 
 func (s *Service) rebuildPackages(ctx context.Context, layers ...string) error {
@@ -438,7 +443,11 @@ func (s *Service) catalogPackageProblemLocked(pkg *stage.Package) *stage.Problem
 			}
 		}
 	}
-	return s.unknownPackageLocked(m.Stage)
+	files := []SelectedFile{}
+	for _, f := range pkg.LocalFiles() {
+		files = append(files, SelectedFile{Path: f.Path, Size: f.Size, SHA256: f.SHA256})
+	}
+	return s.unknownPackageLocked(m.Stage, files...)
 }
 
 func (s *Service) selectOne(ctx context.Context, choice, layer, role, path string) (InstallState, error) {
@@ -461,12 +470,14 @@ func (s *Service) ImportArtifact(ctx context.Context, layer, role, path string) 
 }
 
 // InstallPrepare restores and rechecks remembered paths. An empty row stays empty until the
-// user selects its file; entering Prepare never performs network I/O.
+// user selects its file. A missing package list is fetched before checking selections.
 func (s *Service) InstallPrepare(ctx context.Context, choice string) (InstallState, error) {
 	if len(choiceNeeds(choice)) == 0 {
 		return s.InstallSnapshot(), &stage.Problem{Code: "bad-choice", Detail: choice}
 	}
 	s.mu.Lock()
+	s.fileResults = nil
+	s.fileCheck = nil
 	paths := []string{}
 	for _, key := range sortedKeys(s.picks) {
 		f := s.picks[key]
@@ -475,6 +486,10 @@ func (s *Service) InstallPrepare(ctx context.Context, choice string) (InstallSta
 		}
 	}
 	s.mu.Unlock()
+	if s.CatalogSnapshot().Index == nil {
+		// Failure keeps the existing offline manifest fallback available.
+		_, _ = s.CatalogFetch(ctx, "")
+	}
 	if len(paths) > 0 {
 		return s.SelectFiles(ctx, choice, "", "", paths)
 	}

@@ -56,5 +56,5 @@ export function aboutRows(info, t) {
 
 export function aboutText(info, t) {
   return aboutRows(info, t).map(({ label, value, href }) =>
-    label + ": " + value + (href ? " (" + href + ")" : "")).join("\n");
+    t("{label}: {value}", { label, value: value + (href ? " (" + href + ")" : "") })).join("\n");
 }

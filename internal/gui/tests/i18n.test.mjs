@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: AGPL-3.0-only
-// Created by riko chen on 2026-10-20
+// Created by riko chen on 2026-10-21
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -79,4 +79,15 @@ test("t fills placeholders and falls back to English", () => {
   assert.equal(t("Not translated"), "Not translated");
   setLang("fr");
   assert.equal(t("Connect"), "Connect");
+});
+
+
+test("Chinese punctuation uses full-width colons, including composed layer labels", () => {
+  for (const [en, zh] of Object.entries(ZH)) {
+    const prose = zh.replace(/https?:\/\/[^\s）]+/g, "").replace(/\{\w+\}/g, "");
+    assert.ok(!prose.includes(":"), en + ": " + zh);
+  }
+  setLang("zh-CN");
+  assert.equal(t("{layer}: {version}", {layer:t("Device support"),version:"0.2.0"}), "设备支持：0.2.0");
+  assert.equal(t("{layer}: {step}", {layer:t("Device support"),step:t("Verify the layer")}), "设备支持：验证此层");
 });

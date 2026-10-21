@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 OpenXPlay.org
 // SPDX-License-Identifier: AGPL-3.0-only
-// Created by riko chen on 2026-10-20
+// Created by riko chen on 2026-10-21
 
 // Pure view logic for the device card, kept free of the DOM so it runs under node:test.
 
@@ -39,6 +39,11 @@ export function usbPort(usb) {
 // text picks a profile string in the UI language, falling back to English.
 export function text(t, lang) {
   return (t && (t[lang] || t.en)) || "";
+}
+
+// The card and confirmation use the same confirmed identity, never a USB port as a serial.
+export function deviceSummary(t, name, device, serial) {
+  return name + " · " + (device.host || t("Serial {serial}", { serial: serial || "—" }));
 }
 
 // deviceView sorts a snapshot into what the card shows. Supported devices are candidates a profile

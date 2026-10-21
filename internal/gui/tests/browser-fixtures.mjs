@@ -42,8 +42,8 @@ const artifact = (role, name, size, status = "verified", sha256 = hash) => ({ ro
 
 export function fixture(scene) {
   if(scene.startsWith("n1-")||scene==="device-type")return n1Fixture(scene);
-  let mode = scene.startsWith("prepare-") ? "stock" : scene === "connect-fastboot" ? "fastboot" : scene === "connect-stock" ? "stock" : "adb";
-  const state = { target: { profile: "ufi003", device: candidate(mode) }, identity: { mode, serial, product: mode === "fastboot" ? "lk1st" : "", location: "1-3.2" },
+  let mode = scene.startsWith("prepare-") && scene !== "prepare-refusal" ? "stock" : scene === "connect-fastboot" ? "fastboot" : scene === "connect-stock" ? "stock" : "adb";
+  const state = { target: { profile: "ufi003", name: ufiProfile.name, device: candidate(mode) }, identity: { mode, serial, product: mode === "fastboot" ? "lk1st" : "", location: "1-3.2" },
     installed: structuredClone(facts), installedStale: false, packages: [], layers: [], choices: [], suggested: mode === "stock" ? "stock" : mode === "fastboot" ? "repair" : "relay",
     nextSteps: { serial, identity: "absent", forward: { active: false } },
     catalog: { status: "fresh", channel: "beta", signatureCheck: true, verified: true, index: { sequence: 12, generated: "2026-10-21T08:00:00Z" } },
@@ -62,7 +62,8 @@ export function fixture(scene) {
         version: layer === "base" ? "OpenStick v1" : layer === "device" ? "0.1.0" : "0.1.5~beta.1", sha256: hash, size: list.reduce((n, a) => n+a.size, 0), checked: list.every((a) => a.verified) } };
   };
   const choice = (id, layers, destructive = false, name) => ({ id, name, serial, layers, destructive, backupRequired: destructive, ready: true,
-    needs: layers.map(need), steps: [...(destructive ? baseSteps : []), ...layers.filter((l) => l !== "base").map((layer) => ({ layer, action: "install", resumable: true }))] });
+    needs: layers.map(need), steps: [...(destructive ? baseSteps : []), ...layers.filter((l) => l !== "base").map((layer) => ({ layer, action: "install", resumable: true })),
+      ...(layers.includes("device") && layers.includes("relay") ? [{layer:"device",action:"verify"},{layer:"device",action:"installed"}] : [])] });
   state.choices = [choice("full", ["device", "relay"]), choice("device", ["device"]), choice("relay", ["relay"]),
     choice("stock", ["base", "device", "relay"], true, text("Install OpenXPlay from the original firmware", "从原厂固件安装 OpenXPlay")),
     choice("base", ["base"], true, text("Reinstall the base system", "重新安装基础系统")),
@@ -81,17 +82,17 @@ export function fixture(scene) {
   if (mode === "stock") { state.target.device.usb = { ...unknown.usb }; devices.candidates = [{ ...unknown, mode: "stock", profiles: ["ufi003"], serialno: serial }]; state.installed.layers = {}; }
   if (scene === "connect-designation") { devices.candidates = [unknown]; delete state.target; delete state.identity; delete state.installed; state.choices=[]; state.layers=[]; }
   if (scene === "connect-fastboot") { state.resume = { serial, finished: false, capturedSet: "20261021T080000Z" }; state.installed.layers = {}; }
-  if (scene === "critical" || scene === "system-progress" || scene.startsWith("done-")) {
+  if (scene === "critical" || scene.startsWith("system-progress") || scene.startsWith("done-")) {
     const success = scene === "done-success" || scene === "done-identity";
-    const activeIndex = scene === "system-progress" ? 5 : 3;
-    const steps = state.choices.find((c) => c.id === "full-reinstall").steps.map((s, i) => ({ ...s, status: success ? "ok" : i < activeIndex ? "ok" : i === activeIndex ? ["critical", "system-progress"].includes(scene) ? "running" : "failed" : "pending" }));
-    state.job = { profile: "ufi003", serial, plan: "repair", status: ["critical", "system-progress"].includes(scene) ? "running" : success ? "succeeded" : "failed",
+    const activeIndex = scene.startsWith("system-progress") ? 5 : 3;
+    const steps = state.choices.find((c) => c.id === "full-reinstall").steps.map((s, i) => ({ ...s, status: success ? "ok" : i < activeIndex ? "ok" : i === activeIndex ? scene === "critical" || scene.startsWith("system-progress") ? "running" : "failed" : "pending" }));
+    state.job = { profile: "ufi003", serial, plan: "repair", status: scene === "critical" || scene.startsWith("system-progress") ? "running" : success ? "succeeded" : "failed",
       started: new Date(Date.now()-162000).toISOString(), finished: new Date().toISOString(), failed: success ? -1 : 3, observed: success,
       steps, log: "", installed: structuredClone(facts), left: success ? "installed" : "partial",
       findings: { "df -h /": "/dev/root 3.6G 1.3G 2.3G 37% /", "systemctl --failed --no-pager": "0 loaded units listed.", backupComparison: "different" },
       ...(!success && scene !== "critical" ? { problem: { code: "reconnected" } } : {}) };
     if (!success) state.resume = { serial, finished: false, restoreSet: "20261021T080000Z" };
-    if (scene === "system-progress") state.job.transfer = { phase: "sending", piece: 2, pieces: 5, done: 73400320, total: 209715200, estimateSeconds: 27 };
+    if (scene.startsWith("system-progress")) state.job.transfer = { phase: scene.endsWith("writing")?"writing":"sending", piece: 4, pieces: 5, done: scene.endsWith("writing")?0:73400320, total: 209715200, estimateSeconds: scene.endsWith("writing")?0:27 };
     if (scene === "done-identity") state.nextSteps = { serial, identity: "present", forward: { active: true, serial, address: "https://127.0.0.1:57431/" } };
   }
   if (state.resume && !state.resume.finished && !state.choices.some((c) => c.id === "repair")) state.choices.push(choice("repair", ["base"], true, text("Repair", "修复")));
@@ -110,9 +111,9 @@ function n1Fixture(scene) {
  const device={...gadget,connection:mode,host:mode==="usb"?"192.168.201.1":"192.168.1.80",port:22,serialno:"021122334455",product:"Phicomm N1"};
  data.connection={profile:scene==="device-type"?"":"phicomm-n1",...(connected?{device}:{})};
  data.recent=[{host:"192.168.1.80",port:22,user:"riko",mode:"network"},{host:"192.168.201.1",port:22,user:"riko",mode:"usb"}];
- data.devices={candidates:scene==="device-type"?[candidate(),gadget]:[connected?device:gadget]};
+ data.devices={candidates:scene==="device-type"?[candidate(),gadget]:connected?[device]:mode==="usb"?[gadget]:[]};
  if(!connected){delete data.state.target;delete data.state.identity;delete data.state.installed;delete data.state.job;data.state.layers=[];data.state.choices=[];return data;}
- data.state.target={profile:"phicomm-n1",device};data.state.identity={mode:"ssh",serial:device.serialno,location:device.host+":22"};
+ data.state.target={profile:"phicomm-n1",name:n1Profile.name,device};data.state.identity={mode:"ssh",serial:device.serialno,location:device.host+":22"};
  Object.assign(data.state.installed,{kernelRelease:"6.12.112-ophub",deviceTreeModel:"Phicomm N1",debianVersion:"13",dpkgArchitecture:"arm64",prettyName:"Debian GNU/Linux 13 (trixie)"});
  data.state.installed.layers.base="6.12.112-ophub";
  data.state.layers[0]={layer:"base",name:n1Profile.layers[0].name,installed:"6.12.112-ophub",kernelRelease:"6.12.112-ophub",prettyName:"Debian GNU/Linux 13 (trixie)",readOnly:true,guide:"phicommN1",action:"guide",enabled:true};
@@ -138,13 +139,13 @@ const server = createServer(async (req, res) => {
   const json = (value, status = 200) => { res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(value)); };
   if (url.pathname === "/boot.js") {
     const links = Object.fromEntries(["en", "zh-CN"].map((l) => [l, { phicommN1:"https://openxplay.org/"+(l==="en"?"en/":"")+"phicomm-n1", manual: "https://openxplay.org/"+(l === "en" ? "en/" : "")+"ufi003-flash", tutorial: "https://openxplay.org/ufi003-relay#flasher", download:"https://openxplay.org/ufi003-relay#flasher-download", source: "https://github.com/OpenXPlay/OpenXPlay-Flasher" }]));
-    res.setHeader("Content-Type", "text/javascript"); res.end("window.bootPrefs="+JSON.stringify({ lang: language, systemLang: language, saved: language, verifyPackageListSignature: data.settings.verifyPackageListSignature, web: true, platform: "darwin", links })+";"); return;
+    res.setHeader("Content-Type", "text/javascript"); res.end("window.bootPrefs="+JSON.stringify({ lang: language, systemLang: language, saved: language, verifyPackageListSignature: data.settings.verifyPackageListSignature, web: scene !== "n1-key-picker", platform: "darwin", links })+";"); return;
   }
   if (url.pathname === "/api/state") {
     if (Number(url.searchParams.get("after")) >= (data.rev || 1)) await new Promise((resolve) => setTimeout(resolve, 1200));
     json({ rev: data.rev || 1, devices: data.devices, install: data.state }); return;
   }
-  if(url.pathname==="/api/connection"){json({connection:data.connection||{profile:"ufi003"},recent:data.recent||[]});return;}
+  if(url.pathname==="/api/connection"){json({connection:data.connection||{profile:"ufi003"},recent:data.recent||[],knownHosts:data.knownHosts||[]});return;}
   if(url.pathname==="/api/devices/select"){
    let body="";for await(const chunk of req)body+=chunk;const input=JSON.parse(body);
    data.connection={profile:input.profile};
@@ -153,8 +154,14 @@ const server = createServer(async (req, res) => {
   }
   if(url.pathname==="/api/ssh/connect"){
    let body="";for await(const chunk of req)body+=chunk;const input=JSON.parse(body);
-   if(!input.acceptHostKey){json({code:"ssh-host-unknown",host:(input.host||"192.168.201.1")+":22",fingerprint:"SHA256:K3eP9Yg2rVN8tX4JmU6sD1aH5bF0cL7wQzOiRxABcdE"},409);return;}
+   if(scene==="n1-timeout"){json({code:"ssh-timeout"},409);return;}
+   if(!input.acceptHostKey){json({code:"ssh-host-unknown",host:(input.host||"192.168.201.1")+":22",keyType:"ssh-ed25519",fingerprint:"SHA256:K3eP9Yg2rVN8tX4JmU6sD1aH5bF0cL7wQzOiRxABcdE"},409);return;}
    Object.assign(data,n1Fixture("n1-choose"));data.rev=(data.rev||1)+1;json(data.state);return;
+  }
+  if(url.pathname==="/api/ssh/key/pick"){json({path:"/fake/keys/n1_ed25519"});return;}
+  if(url.pathname==="/api/artifacts/import"||url.pathname==="/api/artifacts/pick"){
+    data.state.fileResults=[{name:"openxplay-relay_0.1.4_arm64.deb",size:4194304,sha256:hash,problem:{code:"catalog-unknown",detail:"openxplay-relay_0.1.4_arm64.deb · 4194304 B · SHA-256 "+hash.slice(0,12)+" · 0.1.5~beta.1"}}];
+    data.rev=(data.rev||1)+1;json(data.state);return;
   }
   if(url.pathname==="/api/ssh/forget"||url.pathname==="/api/ssh/disconnect"){res.writeHead(204);res.end();return;}
   if (url.pathname === "/api/profiles") { json([ufiProfile,n1Profile]); return; }

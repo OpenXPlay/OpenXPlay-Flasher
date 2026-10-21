@@ -44,6 +44,11 @@ func (s *Service) scanDevices(ctx context.Context, probe bool) device.Snapshot {
 	open, supported := s.fastbootOpen, s.fastbootSupported
 	for i := range snap.Candidates {
 		c := &snap.Candidates[i]
+		if target := s.installTarget; target != nil && c.Mode == target.Device.Mode &&
+			c.USB.Location() == target.Device.USB.Location() && c.USB.ID() == target.Device.USB.ID() &&
+			c.USB.Serial == target.Device.USB.Serial {
+			c.Serialno = target.Device.Serialno
+		}
 		if d, ok := s.designations[c.USB.Location()]; ok && c.Mode == device.ModeADB && c.USB.ID() == d.USB.ID() && (c.USB.Serial == "" || c.USB.Serial == d.Identity.Serial) {
 			c.Mode = profile.ModeStock
 			c.Profiles = []string{d.Profile}
@@ -284,7 +289,7 @@ func (s *Service) inspectBaseTarget(ctx context.Context) (bool, profile.Profile,
 			s.fastbootSupported = false
 		}
 		if p.ID != "" && c != nil {
-			t := InstallTarget{Device: *c, Profile: p.ID}
+			t := InstallTarget{Device: *c, Profile: p.ID, Name: p.Name}
 			s.installTarget = &t
 			s.installed = &stage.Facts{Layers: map[string]string{}}
 			s.baseIdentity = nil
@@ -296,7 +301,7 @@ func (s *Service) inspectBaseTarget(ctx context.Context) (bool, profile.Profile,
 	c.Product, c.Serialno = identity.Product, identity.Serial
 	s.mu.Lock()
 	s.baseIdentity = &identity
-	s.installTarget = &InstallTarget{Device: *c, Profile: p.ID}
+	s.installTarget = &InstallTarget{Device: *c, Profile: p.ID, Name: p.Name}
 	s.installed = &stage.Facts{Layers: map[string]string{}, Packages: map[string]string{}, FreeKiB: map[string]int64{}}
 	s.installProblem = nil
 	s.installStale = false

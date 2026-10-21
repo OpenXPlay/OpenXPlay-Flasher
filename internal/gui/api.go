@@ -156,7 +156,12 @@ func Handler(d Deps) http.Handler {
 			writeError(w, http.StatusInternalServerError, "settings_write", err.Error())
 			return
 		}
+		changed := d.Service.CatalogSnapshot().SignatureCheck != in.VerifyPackageListSignature
 		d.Service.SetSignatureCheck(r.Context(), in.VerifyPackageListSignature)
+		if changed {
+			// Fetch in the new trust mode immediately; catalog state reports offline failures.
+			_, _ = d.Service.CatalogFetch(r.Context(), "")
+		}
 		d.Native.SetLang(UILang(in.Lang, d.SystemLang))
 		writeJSON(w, http.StatusOK, in)
 	})

@@ -28,6 +28,7 @@ var ErrDeviceBusy = errors.New("a device operation is already running")
 type InstallTarget struct {
 	Device  device.Candidate `json:"device"`
 	Profile string           `json:"profile"`
+	Name    profile.Text     `json:"name"`
 }
 
 type InstallState struct {
@@ -105,7 +106,7 @@ func (s *Service) installDevice(ctx context.Context) (InstallTarget, profile.Pro
 	}
 	for _, p := range s.profiles {
 		if p.ID == c.Profiles[0] {
-			return InstallTarget{c, p.ID}, p, nil
+			return InstallTarget{Device: c, Profile: p.ID, Name: p.Name}, p, nil
 		}
 	}
 	return InstallTarget{}, profile.Profile{}, ErrUnconfirmed
@@ -177,6 +178,9 @@ func (s *Service) inspectInstall(ctx context.Context, choice string) (profile.Pr
 		d, err = s.openDevice(ctx, target.Device)
 		if err == nil {
 			serial, serialErr := s.boardSerial(ctx, d)
+			if serialErr == nil {
+				target.Device.Serialno = serial
+			}
 			s.mu.Lock()
 			s.baseIdentity = nil
 			s.unfinished = nil
@@ -255,6 +259,8 @@ func (s *Service) InstallRemove(id string) (InstallState, error) {
 	}
 	defer s.configMu.Unlock()
 	s.mu.Lock()
+	s.fileResults = nil
+	s.fileCheck = nil
 	for _, pkg := range s.packages {
 		if pkg.Info().ID == id {
 			layer := pkg.Manifest().Stage

@@ -26,9 +26,9 @@ test("About and its plain text report contain localized build and connection det
   ].join("\n"));
   setLang("zh-CN");
   const zh = aboutText(info, t);
-  assert.ok(zh.includes("产品: OpenXPlay 刷机工具"));
-  assert.ok(zh.includes("构建日期: 2026-10-21T12:00:00Z"));
-  assert.ok(zh.includes("上次 adb 连接: 原生 USB"));
+  assert.ok(zh.includes("产品：OpenXPlay 刷机工具"));
+  assert.ok(zh.includes("构建日期：2026-10-21T12:00:00Z"));
+  assert.ok(zh.includes("上次 adb 连接：原生 USB"));
   assert.ok(!zh.includes("<"));
   setLang("en");
 });

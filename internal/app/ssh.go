@@ -128,6 +128,9 @@ func (s *Service) SSHKnownHosts() string {
 	}
 	return filepath.Join(s.dataDir, "known_hosts")
 }
+func (s *Service) SSHStoredHosts() ([]string, error) {
+	return sshdev.StoredHosts(s.SSHKnownHosts())
+}
 func (s *Service) SSHForget(host string, port int) error {
 	if !s.configMu.TryLock() {
 		return ErrDeviceBusy
@@ -245,7 +248,7 @@ func (s *Service) SSHConnect(ctx context.Context, mode string, o sshdev.Options)
 	s.resetTargetLocked()
 	s.selectedProfile = p.ID
 	s.sshSession = &sshSession{connector, candidate, serial}
-	s.installTarget = &InstallTarget{Device: candidate, Profile: p.ID}
+	s.installTarget = &InstallTarget{Device: candidate, Profile: p.ID, Name: p.Name}
 	s.installed = &facts
 	s.baseIdentity = &base.Identity{Mode: profile.ModeSSH, Serial: serial, Location: connector.Address()}
 	s.nextSteps.AdminURL = relayURL(host)

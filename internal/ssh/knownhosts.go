@@ -9,6 +9,7 @@ package ssh
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 type HostKeyError struct {
 	Host        string `json:"host"`
 	Fingerprint string `json:"fingerprint"`
+	KeyType     string `json:"keyType"`
 	Changed     bool   `json:"changed"`
 }
 
@@ -32,7 +34,7 @@ func (e *HostKeyError) Error() string {
 	if e.Changed {
 		return fmt.Sprintf("SSH host key changed for %s; connection refused. Verify the box before forgetting this host. / %s 的 SSH 主机密钥已改变，已拒绝连接。请先核实设备，再忘记此主机。 (%s)", e.Host, e.Host, e.Fingerprint)
 	}
-	return fmt.Sprintf("Unknown SSH host %s / 未信任的 SSH 主机 %s: %s", e.Host, e.Host, e.Fingerprint)
+	return fmt.Sprintf("Unknown SSH host %s / 未信任的 SSH 主机 %s：%s (%s)", e.Host, e.Host, e.Fingerprint, e.KeyType)
 }
 
 var hostsMu sync.Mutex
@@ -60,10 +62,10 @@ func hostCallback(file, accept string) cryptossh.HostKeyCallback {
 		}
 		fp := cryptossh.FingerprintSHA256(key)
 		if len(ke.Want) > 0 {
-			return &HostKeyError{Host: host, Fingerprint: fp, Changed: true}
+			return &HostKeyError{Host: host, Fingerprint: fp, KeyType: key.Type(), Changed: true}
 		}
 		if accept != fp {
-			return &HostKeyError{Host: host, Fingerprint: fp}
+			return &HostKeyError{Host: host, Fingerprint: fp, KeyType: key.Type()}
 		}
 		if err = os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 			return err
@@ -82,6 +84,32 @@ func hostCallback(file, accept string) cryptossh.HostKeyCallback {
 		}
 		return err
 	}
+}
+
+// StoredHosts returns only addresses in this app's own TOFU file, never the key material.
+func StoredHosts(file string) ([]string, error) {
+	hostsMu.Lock()
+	defer hostsMu.Unlock()
+	data, err := os.ReadFile(file)
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	hosts := []string{}
+	for len(data) > 0 {
+		_, addresses, _, _, rest, err := cryptossh.ParseKnownHosts(data)
+		if errors.Is(err, io.EOF) {
+			break // An empty file, comments or the final newline contain no host records.
+		}
+		if err != nil {
+			return nil, err
+		}
+		hosts = append(hosts, addresses...)
+		data = rest
+	}
+	return hosts, nil
 }
 
 // ForgetHost removes this app's TOFU record, leaving every other host intact. Our records

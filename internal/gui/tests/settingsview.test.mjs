@@ -40,13 +40,13 @@ for (const language of ["en", "zh-CN"]) test("signature switch confirms only tur
   await get("signature-turn-off").click();
   assert.deepEqual(calls, [false]);
   assert.equal(get("signature-confirm-title"), undefined);
-  assert.ok(aboutText(prefs.info, t).includes(t("Verify the package list signature") + ": " + t("Off")));
+  assert.ok(aboutText(prefs.info, t).includes(t("{label}: {value}", { label: t("Verify the package list signature"), value: t("Off") })));
   page.render(prefs);
   assert.equal(get("signature-confirm-title"), undefined, "refresh does not ask again");
   change(true);
   assert.deepEqual(calls, [false, true], "turning on is immediate");
   assert.equal(get("signature-confirm-title"), undefined);
-  assert.ok(aboutText(prefs.info, t).includes(t("Verify the package list signature") + ": " + t("On")));
+  assert.ok(aboutText(prefs.info, t).includes(t("{label}: {value}", { label: t("Verify the package list signature"), value: t("On") })));
   change(false);
   assert.ok(get("signature-confirm-title"), "a later turn-off asks once again");
 });

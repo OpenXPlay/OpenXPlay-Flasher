@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -137,7 +138,7 @@ func TestCatalogUnknownRelayRefusedAndOfflineImportRechecked(t *testing.T) {
 		t.Fatal("unknown relay accepted")
 	}
 	for _, r := range state.FileResults {
-		if r.Problem == nil || r.Problem.Code != "catalog-unknown" || !strings.Contains(r.Problem.Detail, "0.1.5~beta.1") {
+		if r.Problem == nil || r.Problem.Code != "catalog-unknown" || !strings.Contains(r.Problem.Detail, "0.1.5~beta.1") || !strings.Contains(r.Problem.Detail, r.Name) || !strings.Contains(r.Problem.Detail, fmt.Sprintf("%d B", r.Size)) || !strings.Contains(r.Problem.Detail, r.SHA256[:12]) {
 			t.Fatalf("missing listed versions %+v", r)
 		}
 	}
@@ -261,5 +262,43 @@ func TestIdentityPEMSendsDERAndClearsSentBuffers(t *testing.T) {
 		if !bytes.Equal(data, make([]byte, len(data))) {
 			t.Fatal("credential buffer was not zeroed")
 		}
+	}
+}
+
+func TestPrepareClearsPreviousFileResultsAndFetchesMissingCatalog(t *testing.T) {
+	f, svc, _, _ := guidedFixture(t)
+	deb, manifest := relayFiles(t)
+	source := relayList(t, svc, deb, manifest)
+	wrong := filepath.Join(t.TempDir(), "old-refused.deb")
+	if err := os.WriteFile(wrong, []byte("!<arch>\nwrong file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rec := f.do("POST", "/api/artifacts/import", jsonBody(map[string]any{"choice": "relay", "multiple": true, "paths": []string{wrong}})); rec.Code != 200 {
+		t.Fatal(rec.Code, rec.Body)
+	}
+	if len(svc.InstallSnapshot().FileResults) == 0 {
+		t.Fatal("missing refusal fixture")
+	}
+	if rec := f.do("POST", "/api/install/prepare", `{"choice":"device"}`); rec.Code != 200 || len(decodeFilesState(t, rec.Body.Bytes()).FileResults) != 0 {
+		t.Fatal("previous refusal survived another choice", rec.Code, rec.Body)
+	}
+	// No list is active after storage configuration. Prepare must obtain it without Refresh.
+	dir := t.TempDir()
+	svc.ConfigureStorage(dir, filepath.Join(dir, "cache"), filepath.Join(dir, "backups"), source)
+	if svc.CatalogSnapshot().Index != nil {
+		t.Fatal("fixture already fetched")
+	}
+	rec := f.do("POST", "/api/install/prepare", `{"choice":"relay"}`)
+	if rec.Code != 200 || svc.CatalogSnapshot().Index == nil || svc.CatalogSnapshot().Status != "fresh" {
+		t.Fatal("Prepare did not fetch the list", rec.Code, rec.Body)
+	}
+}
+
+func TestConnectAPIPublishesConfirmedBoardSerialAndDisplayName(t *testing.T) {
+	f, _, d, _ := guidedFixture(t)
+	d.reportedSerial = "43fb82bd"
+	state := installState(t, f)
+	if state.Target == nil || state.Target.Device.Serialno != "43fb82bd" || state.Identity == nil || state.Identity.Serial != state.Target.Device.Serialno || state.Target.Name["zh-CN"] != "UFI003 随身 Wi-Fi" {
+		t.Fatalf("inconsistent confirmed identity: %+v", state.Target)
 	}
 }

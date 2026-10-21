@@ -46,7 +46,7 @@ func TestHostKeyLifecycle(t *testing.T) {
 	c := connector(t, o)
 	_, err := c.Connect(context.Background())
 	var key *HostKeyError
-	if !errors.As(err, &key) || key.Changed || key.Fingerprint != s.Fingerprint() {
+	if !errors.As(err, &key) || key.Changed || key.Fingerprint != s.Fingerprint() || key.KeyType != "ssh-ed25519" {
 		t.Fatalf("unknown: %v", err)
 	}
 	if _, err = os.Stat(o.KnownHosts); !errors.Is(err, os.ErrNotExist) {

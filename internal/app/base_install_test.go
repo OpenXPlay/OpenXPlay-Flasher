@@ -841,3 +841,22 @@ func TestPreparingRelayIgnoresChangedUnneededDeviceBundle(t *testing.T) {
 		t.Fatal("unneeded device blocked Prepare", err)
 	}
 }
+
+func TestConfirmedBoardSerialOnDeviceSnapshot(t *testing.T) {
+	s, d, _, _, _ := baseServiceFixture(t)
+	candidate := testCandidate(profile.ModeADB, 1, true)
+	d.det.set(candidate)
+	state := s.Install(t.Context())
+	if state.Target == nil || state.Target.Device.Serialno != "board1" || state.Target.Name["en"] == "" || state.Identity == nil || state.Identity.Serial != state.Target.Device.Serialno {
+		t.Fatalf("confirmed identity missing: %+v", state.Target)
+	}
+	snapshot := s.scanDevices(t.Context(), false)
+	if len(snapshot.Candidates) != 1 || snapshot.Candidates[0].Serialno != "board1" {
+		t.Fatalf("device card snapshot lacks board serial: %+v", snapshot)
+	}
+	candidate.USB.Serial = "another-board"
+	d.det.set(candidate)
+	if snapshot := s.scanDevices(t.Context(), false); snapshot.Candidates[0].Serialno != "" {
+		t.Fatal("another board inherited the previous board's serial")
+	}
+}

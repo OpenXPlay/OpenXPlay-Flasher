@@ -272,3 +272,66 @@ for (const language of ["en", "zh-CN"]) test("N1 read-only Armbian, device/relay
   assert.equal(d.root.textContent.includes("OpenStick"),false);
   assert.equal(d.get("admin-open").tag,"a");assert.equal(d.get("admin-open").href,"https://n1.test:6975/");
 });
+
+for (const language of ["en", "zh-CN"]) test("hardware review summary, confirmed identity, refusal reset, transfer and phases in " + language, async () => {
+  const d=dom(); setLang(language);
+  const savedInterval=globalThis.setInterval; globalThis.setInterval=()=>0;
+  const page=await import("../assets/install.js?hardware-"+language); page.init(boot); globalThis.setInterval=savedInterval;
+  let s=ready(snapshot());
+  s.target.name={en:"UFI003 4G USB dongle","zh-CN":"UFI003 随身 Wi-Fi"};
+  Object.assign(s.target.device,{mode:"adb",serialno:"43fb82bd",usb:{serial:"transport-serial",path:[1,1,1]}});
+  s.identity={serial:"43fb82bd"};
+  const needs=[{layer:"base",package:{checked:true,version:"openstick-v1"},ready:true,artifacts:[]},...s.choices[0].needs];
+  s.choices.push({id:"full-reinstall",name:{en:"Full reinstall","zh-CN":"完整重装"},destructive:true,serial:"43fb82bd",layers:["base","device","relay"],needs,steps:[]});
+  globalThis.fetch=async(url)=>{
+    if(url==="/api/install/prepare")s={...s,fileResults:[]};
+    return {ok:true,status:200,json:async()=>url.startsWith("/api/backups/")?{sets:[]}:s};
+  };
+  page.receive(s); await d.get("nav-1").click(); await d.get("choice-full-reinstall").click();
+  await d.get("install-continue").click(); await d.get("install-continue").click(); await d.get("install-continue").click();
+  const summary=d.nodes().find((n)=>n.className==="flash-summary"); assert.ok(summary);
+  for(const text of ["Erases the device","Base system: about 6 minutes. The device restarts.","Device support: about 1 minute plus a device restart.","Relay: under a minute. The relay restarts.","Keep the device connected and powered until installation finishes."])assert.ok(summary.textContent.includes(t(text)),text);
+  assert.ok(summary.textContent.includes(t("{layer}: {version}",{layer:t("Device support"),version:"2.0"})));
+  assert.ok(summary.textContent.includes(t("{layer}: {version}",{layer:t("OpenXPlay relay"),version:"2.0"})));
+  assert.equal(d.get("install-confirm"),undefined,"summary appears before confirmation");
+  await d.get("install-start").click();
+  const target=d.nodes().find((n)=>n.className==="confirmation-target");
+  assert.ok(target.textContent.includes(s.target.name[language]+" · "+t("Serial {serial}",{serial:"43fb82bd"})));
+  assert.ok(!target.textContent.includes("1.1.1")); assert.ok(!target.textContent.includes("transport-serial"));
+  assert.ok(d.root.textContent.includes(t("Type the serial number shown on the device card to continue")));
+  await d.get("install-cancel").click();
+  await d.get("nav-1").click(); await d.get("choice-relay").click(); await d.get("install-continue").click();
+  const detail="refused package.deb · 2048 B · SHA-256 abcdef012345 · 0.1.5~beta.1";
+  s={...s,fileResults:[{name:"refused package.deb",size:2048,sha256:"abcdef012345",problem:{code:"catalog-unknown",detail}}]}; page.receive(s);
+  assert.ok(d.root.textContent.includes(t("This package is not in the package list. Refused file and listed versions: {detail}.",{detail})));
+  await d.button("Back").click(); await d.get("choice-device").click(); await d.get("install-continue").click();
+  assert.ok(!d.root.textContent.includes("refused package.deb"),"another choice has no earlier refusal");
+  await d.get("install-continue").click(); await d.get("install-continue").click();
+  assert.ok(d.root.textContent.includes(t("Keeps the device's system and data.")));
+  const job={status:"running",started:"2026-10-21T00:00:00Z",log:"",steps:[{id:"rootfs",layer:"base",action:"flash",status:"running"}],transfer:{phase:"sending",piece:4,pieces:5,done:50*1024*1024,total:200*1024*1024}};
+  s={...s,job};page.receive(s);
+  assert.ok(d.root.textContent.includes("50.0 MiB / 200.0 MiB"));
+  let progress=d.nodes().find((n)=>n.tag==="progress");assert.equal(progress.value,3.25);assert.equal(progress.max,5);
+  s={...s,job:{...job,transfer:{...job.transfer,phase:"writing",done:0}}};page.receive(s);
+  assert.ok(d.root.textContent.includes(t("Writing {piece}/{pieces}",{piece:4,pieces:5})));
+  assert.ok(!d.root.textContent.includes("0 B /"));progress=d.nodes().find((n)=>n.tag==="progress");assert.equal(progress.value,4);
+  const steps=[{layer:"device",action:"install"},{layer:"relay",action:"install"},{layer:"device",action:"verify"},{layer:"device",action:"installed"}].map((v)=>({...v,status:"ok"}));
+  s={...s,job:{...job,steps,status:"succeeded",finished:"2026-10-21T00:05:09Z",observed:true,installed:s.installed}};page.receive(s);
+  const phases=d.nodes().filter((n)=>n.tag==="details"&&n.className.startsWith("job-phase")).map((n)=>n.children[0].textContent);
+  assert.deepEqual(phases,[t("Device support"),t("OpenXPlay relay"),t("Check device support")]);
+});
+
+for (const language of ["en", "zh-CN"]) test("N1 confirmation and running warnings name the network in " + language, async () => {
+  const d=dom();setLang(language);const savedInterval=globalThis.setInterval;globalThis.setInterval=()=>0;
+  const page=await import("../assets/install.js?n1-review-"+language);page.init(boot);globalThis.setInterval=savedInterval;
+  const s=ready(snapshot());s.target={profile:"phicomm-n1",name:{en:"Phicomm N1","zh-CN":"斐讯 N1"},device:{mode:"ssh",connection:"network",host:"n1.test",serialno:"021122334455"}};
+  globalThis.fetch=async()=>({ok:true,status:200,json:async()=>s});
+  page.receive(s);await d.get("nav-1").click();await d.get("install-continue").click();await d.get("install-continue").click();await d.get("install-continue").click();
+  assert.ok(d.root.textContent.includes(t("Keep the box powered and connected to the network until installation finishes.")));
+  await d.get("install-start").click();assert.ok(d.root.textContent.includes(t("Phicomm N1")+" · n1.test"));
+  assert.ok(d.root.textContent.includes(t("Board serial (eth0 MAC): {serial}",{serial:"021122334455"})));
+  assert.equal(d.get("install-confirm-warning").textContent,t("Keep the box powered and connected to the network until installation finishes."));
+  page.receive({...s,job:{status:"running",started:"2026-10-21T00:00:00Z",steps:[{layer:"relay",action:"install",status:"running",resumable:true}],log:""}});
+  assert.equal(d.get("install-running-warning").textContent,t("Keep the box powered and connected to the network until installation finishes."));
+  assert.ok(!d.root.textContent.includes(t("Do not unplug the device or cut its power")));
+});

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
@@ -52,6 +53,47 @@ func (Options) String() string     { return "SSH connection options (credentials
 func (o Options) GoString() string { return o.String() }
 
 type KeyPassphraseError struct{}
+
+// ConnectionError classifies failures without putting credentials or transport diagnostics in
+// user-facing messages. Unwrap preserves cancellation and network error checks for callers.
+type ConnectionError struct {
+	Kind string
+	Err  error
+}
+
+func (e *ConnectionError) Error() string {
+	switch e.Kind {
+	case "refused":
+		return "SSH connection refused; no SSH server on this port / SSH 连接被拒绝，此端口没有 SSH 服务"
+	case "timeout", "no-greeting":
+		return "SSH timed out or sent no greeting; check the address, power and direct routing in proxy/VPN apps / SSH 连接超时或未收到 SSH 握手信息，请检查地址、电源，并在代理或 VPN 应用中将此地址设为直连"
+	case "authentication":
+		return "SSH authentication failed; check the user name, password or private key / SSH 认证失败，请检查用户名、密码或私钥"
+	default:
+		return "SSH connection failed / SSH 连接失败"
+	}
+}
+func (e *ConnectionError) Unwrap() error { return e.Err }
+
+func connectionError(err error) error {
+	var host *HostKeyError
+	if errors.As(err, &host) || errors.Is(err, context.Canceled) {
+		return err
+	}
+	kind := "connection"
+	var network net.Error
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		kind = "refused"
+	case errors.Is(err, context.DeadlineExceeded) || errors.As(err, &network) && network.Timeout():
+		kind = "timeout"
+	case strings.Contains(err.Error(), "unable to authenticate"):
+		kind = "authentication"
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		kind = "no-greeting"
+	}
+	return &ConnectionError{Kind: kind, Err: err}
+}
 
 func (*KeyPassphraseError) Error() string {
 	return "The SSH private key needs a passphrase / SSH 私钥需要口令"
@@ -149,7 +191,7 @@ func (c *Connector) Connect(ctx context.Context) (adb.Device, error) {
 	defer cancel()
 	conn, err := c.opts.Dialer.DialContext(ctx, "tcp", c.Address())
 	if err != nil {
-		return nil, err
+		return nil, connectionError(err)
 	}
 	deadline, _ := ctx.Deadline()
 	_ = conn.SetDeadline(deadline)
@@ -158,12 +200,12 @@ func (c *Connector) Connect(ctx context.Context) (adb.Device, error) {
 	if !stop() || ctx.Err() != nil {
 		conn.Close()
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, connectionError(ctx.Err())
 		}
 	}
 	if err != nil {
 		conn.Close()
-		return nil, err
+		return nil, connectionError(err)
 	}
 	_ = conn.SetDeadline(time.Time{})
 	d := &Device{client: cryptossh.NewClient(sc, ch, req), opts: c.opts, done: make(chan struct{})}

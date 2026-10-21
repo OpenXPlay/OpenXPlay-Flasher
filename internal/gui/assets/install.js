@@ -5,6 +5,7 @@
 import { t, lang } from "./i18n.js";
 import { api, el } from "./ui.js";
 import { linksFor } from "./settingslogic.js";
+import { deviceSummary } from "./devices.js";
 import { ACTION_TEXT, LAYER_TEXT, STATUS_TEXT, LEFT_TEXT, COMPARISON_TEXT, WARNING_TEXT,
   problemText, canChoose, canContinue, canStart, canNavigate, canSkipBackup, selectedChoice, neededRows,
   isRunning, confirmationWarning, unplugText, guardBeforeUnload, displayVersion, elapsed, phase, mergeState,
@@ -45,6 +46,7 @@ export function receive(state) {
   if (changedDevice) {
     view.choice = ""; view.serial = ""; view.backups = null; view.identityPaths = []; view.identityPath = "";
     view.identityMessage = ""; view.nextError = null; view.confirm = false;
+    view.error = null; view.rowErrors = {};
   }
   if (!view.choice) view.choice = suggestedAction(state);
   const job = state.job;
@@ -67,6 +69,7 @@ async function go(step) {
   view.initialized = true;
   view.confirm = false;
   view.error = null;
+  if (step === 2) clearMessages();
   render();
   focus("install-step-title");
   if (step === 2) {
@@ -114,7 +117,7 @@ async function backToLayers() {
 async function changePackage(layer, action) {
   view.busy = true;
   view.confirm = false;
-  view.rowErrors[layer] = null;
+  clearMessages();
   render();
   try { receive(await action()); await refresh(); }
   catch (err) { view.rowErrors[layer] = err; }
@@ -198,11 +201,16 @@ function guide() {
 
 function choose(id) {
   if (!canChoose(view.state, id, view.busy)) return;
-  if (view.choice !== id) view.downgrade = false;
+  if (view.choice !== id) { view.downgrade = false; clearMessages(); }
   view.choice = id;
   view.serial = "";
   view.confirm = false;
   render();
+}
+
+function clearMessages() {
+  view.error = null; view.rowErrors = {};
+  if (view.state) view.state = { ...view.state, fileResults: [], fileCheck: null };
 }
 
 function choiceButton(id, text, enabled) {
@@ -216,7 +224,7 @@ function stepLabel(s) { return s.name?.[lang()] || s.name?.en || t(ACTION_TEXT[s
 
 function stepList(choice) {
   return el("details", { class: "choice-steps" }, [el("summary", {}, t("Show steps")),
-    el("ol", {}, choice.steps.map((s) => el("li", {}, name(s.layer) + ": " + stepLabel(s))))]);
+    el("ol", {}, choice.steps.map((s) => el("li", {}, t("{layer}: {step}", { layer: name(s.layer), step: stepLabel(s) }))))]);
 }
 
 function choiceLabel(c) {
@@ -428,9 +436,10 @@ function confirmation(selected) {
   const device = view.state.target.device;
   return el("div", { class: "confirm" + (selected.destructive ? " destructive-confirm" : ""), role: "alertdialog", "aria-labelledby": "install-confirm-title", "aria-describedby": "install-confirm-warning" }, [
     el("strong", { id: "install-confirm-title" }, t("Start this installation?")),
-    el("p", { id: "install-confirm-warning", class: "warning flash-warning", role: "alert" }, view.state?.target?.device?.connection === "network" ? t("Keep the box powered and connected until installation finishes.") : t(confirmationWarning(selected))),
-    el("p", {}, t("Target: {device}", { device: view.state.target.profile + " · " + (device.host || device.usb?.serial || device.usb?.path?.join(".") || "") })),
-    el("ul", {}, selected.needs.filter((n) => n.package).map((n) => el("li", {}, [(n.layer === "base" ? "" : name(n.layer) + ": ") + displayVersion(n.layer, n.package.version), n.layer === "base" && baseKernel() ? el("small", { class: "kernel-version" }, t("Kernel: {version}", { version: baseKernel() })) : ""]))),
+    el("p", { id: "install-confirm-warning", class: "warning flash-warning", role: "alert" }, device.connection === "network" ? t("Keep the box powered and connected to the network until installation finishes.") : t(confirmationWarning(selected))),
+    el("p", { class: "confirmation-target" }, t("Target: {device}", { device: deviceSummary(t, view.state.target.name?.[lang()] || view.state.target.name?.en || (device.mode === "ssh" ? t("Phicomm N1") : t("UFI003 USB dongle")), device, serialFor(view.state, view.choice)) })),
+    device.mode === "ssh" ? el("p", {}, t("Board serial (eth0 MAC): {serial}", { serial: serialFor(view.state, view.choice) })) : "",
+    el("ul", {}, selected.needs.filter((n) => n.package).map((n) => el("li", {}, [t("{layer}: {version}", { layer: n.layer === "base" ? t("Base system") : name(n.layer), version: displayVersion(n.layer, n.package.version) }), n.layer === "base" && baseKernel() ? el("small", { class: "kernel-version" }, t("Kernel: {version}", { version: baseKernel() })) : ""]))),
     has("device") ? el("p", {}, t("Bluetooth restarts and the device reboots once for the device layer.")) : "",
     has("relay") ? el("p", {}, t("The relay restarts.")) : "",
     el("p", {}, t("CarPlay stops for a while. Do not install while driving.")),
@@ -446,10 +455,23 @@ function confirmation(selected) {
 function flashView() {
   if (running()) return [jobView(view.state.job)];
   const selected = selectedChoice(view.state, view.choice);
-  return [title(t("Flash")), selected ? stepList(selected) : "",
+  return [title(t("Flash")), selected ? flashSummary(selected) : "", selected ? stepList(selected) : "",
     view.confirm && selected ? confirmation(selected) : el("div", { class: "actions" }, [back(3),
       el("button", { id: "install-start", type: "button", class: "primary", disabled: !canContinue(view.state, view.choice, view.downgrade, view.busy),
         onclick: () => { view.confirm = true; render(); focus("install-cancel"); } }, t("Start"))])];
+}
+
+function flashSummary(selected) {
+  const has = (layer) => selected.layers.includes(layer);
+  return el("section", { class: "flash-summary", "aria-label": t("Installation summary") }, [
+    el("h3", {}, choiceLabel(selected)), el("p", {}, t(CHOICE_TEXT[selected.id])),
+    el("p", { class: selected.destructive ? "warning" : "note" }, selected.destructive ? t("Erases the device") : t("Keeps the device's system and data.")),
+    el("ul", {}, selected.needs.filter((n) => n.package).map((n) => el("li", {}, t("{layer}: {version}", { layer: n.layer === "base" ? t("Base system") : name(n.layer), version: displayVersion(n.layer, n.package.version) })))),
+    has("base") ? el("p", {}, t("Base system: about 6 minutes. The device restarts.")) : "",
+    has("device") ? el("p", {}, t("Device support: about 1 minute plus a device restart.")) : "",
+    has("relay") ? el("p", {}, t("Relay: under a minute. The relay restarts.")) : "",
+    el("p", { class: "note" }, view.state.target.device.connection === "network" ? t("Keep the box powered and connected to the network until installation finishes.") : t("Keep the device connected and powered until installation finishes.")),
+  ]);
 }
 
 function jobView(job) {
@@ -458,16 +480,20 @@ function jobView(job) {
     job.status === "running" ? el("p", { role: "status" }, active ? t("Installing {layer}: {step}", { layer: name(active.layer), step: stepLabel(active) }) : t("Starting installation…")) : "",
     el("p", { id: "install-elapsed" }, t("Elapsed: {time}", { time: elapsed(job) }))];
   if (active && job.status === "running") parts.push(el("div", { class: "phase-warning " + phaseStyle(active), role: "alert" }, [
-    el("strong", {}, t(PHASE_TEXT[phaseGroups([active])[0].phase] || "Installation progress")),
-    el("p", {}, active.critical ? t("Do not unplug the device or cut its power") : active.resumable ? t("If this is interrupted, it can be repeated") : ""),
+    el("strong", {}, t(PHASE_TEXT[phaseGroups(job.steps).find((g) => g.steps.includes(active)).phase] || "Installation progress")),
+    el("p", {}, view.state.target?.device?.connection === "network" ? t("Keep the box powered and connected to the network until installation finishes.") : active.critical ? t("Do not unplug the device or cut its power") : active.resumable ? t("If this is interrupted, it can be repeated") : ""),
   ]));
   if (job.status === "running" && ["adb-bootloader", "reboot-bootloader"].includes(active?.action)) parts.push(el("p", { role: "status" }, t("The dongle is restarting into the bootloader…")));
   if (job.status === "running" && active?.action === "wait-fastboot") parts.push(el("p", { role: "status" }, t("Waiting for the bootloader to reconnect…")));
   if (job.status === "running" && active?.action === "wait-linux") parts.push(el("p", { role: "status" }, t("Waiting for Linux to start (up to 3 minutes)…")));
   if (job.transfer && job.status === "running") {
     const p = job.transfer;
-    parts.push(el("p", { class: "transfer-progress", role: "status" }, (p.phase === "sending" ? t("Sending {piece}/{pieces}", p) : t("Writing {piece}/{pieces}", p)) + " · " + sizeText(p.done) + " / " + sizeText(p.total)),
-      el("progress", { value: p.done, max: p.total, "aria-label": t("Installation progress") }));
+    // Fastboot exposes bytes while sending. Writing has no byte callbacks, so retain the
+    // chunk's sent position instead of presenting a byte counter stuck at zero.
+    const sent = p.phase === "sending" ? Math.min(1, p.done / (p.total || 1)) : 1;
+    parts.push(el("p", { class: "transfer-progress", role: "status" }, p.phase === "sending" ?
+      t("Sending {piece}/{pieces}", p) + " · " + sizeText(p.done) + " / " + sizeText(p.total) : t("Writing {piece}/{pieces}", p)),
+      el("progress", { value: p.piece - 1 + sent, max: p.pieces, "aria-label": t("Installation progress") }));
     if (p.estimateSeconds > 0) parts.push(el("p", { class: "note" }, t("Estimated time for this transfer: {seconds} s", { seconds: p.estimateSeconds })));
   }
   if (job.findings?.backupComparison?.startsWith("different")) parts.push(el("p", { class: "note" }, t("The modem's EFS data changes while Linux runs. This is normal; a new backup set was saved.")));
@@ -613,7 +639,7 @@ export function render() {
   signatureNotice.hidden = (view.state?.catalog?.signatureCheck ?? view.boot.verifyPackageListSignature) !== false;
   signatureNotice.textContent = t("Signature check is off: the package list is not verified");
   banner.hidden = !running();
-  banner.textContent = view.state?.target?.device?.connection === "network" ? t("Keep the box powered and connected until installation finishes.") : t(WARNING_TEXT.running);
+  banner.textContent = view.state?.target?.device?.connection === "network" ? t("Keep the box powered and connected to the network until installation finishes.") : t(WARNING_TEXT.running);
   banner.classList.toggle("critical", !!view.state?.job?.steps?.some((s) => s.status === "running" && s.critical));
   document.getElementById("install-connect").hidden = step !== 0;
   const renderStep = [connectView, chooseView, prepareView, backupView, flashView, () => view.state?.job ? [jobView(view.state.job)] : []][step];

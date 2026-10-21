@@ -30,7 +30,7 @@ func TestSSHActiveDeviceAndIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Target.Profile != "phicomm-n1" || state.Identity.Serial != "021122334455" || state.NextSteps.AdminURL != "https://127.0.0.1:6975/" || state.Installed.Layers["base"] == "" {
+	if state.Target.Profile != "phicomm-n1" || state.Identity.Serial != "021122334455" || state.Target.Device.Serialno != state.Identity.Serial || state.Target.Name["zh-CN"] != "斐讯 N1" || state.NextSteps.AdminURL != "https://127.0.0.1:6975/" || state.Installed.Layers["base"] == "" {
 		t.Fatalf("%+v", state)
 	}
 	for _, c := range state.Choices {

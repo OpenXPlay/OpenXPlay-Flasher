@@ -89,17 +89,20 @@ func TestSignatureSettingControlsCatalogAPI(t *testing.T) {
 	if rec := f.do("POST", "/api/settings", `{"verifyPackageListSignature":false}`); rec.Code != 200 {
 		t.Fatal(rec.Code, rec.Body)
 	}
+	if state := svc.CatalogSnapshot(); state.Index == nil || state.Status != "fresh" || state.Verified || state.SignatureCheck {
+		t.Fatal("switching off did not fetch an unsigned list immediately", state)
+	}
 	if rec := f.do("POST", "/api/catalog/fetch", `{}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"verified":false`) || !strings.Contains(rec.Body.String(), `"reason":"no signature"`) {
 		t.Fatal("off mode failed", rec.Code, rec.Body)
 	}
 	if rec := f.do("POST", "/api/settings", `{"verifyPackageListSignature":true}`); rec.Code != 200 {
 		t.Fatal(rec.Code, rec.Body)
 	}
-	if state := svc.CatalogSnapshot(); state.Index != nil || !state.SignatureCheck {
-		t.Fatal("unverified list remained active after enabling verification", state)
+	if state := svc.CatalogSnapshot(); state.Index != nil || !state.SignatureCheck || state.Status != "failed" {
+		t.Fatal("enabling verification did not fetch and reject the unsigned list", state)
 	}
 	f.do("POST", "/api/settings", `{"verifyPackageListSignature":false}`)
-	if state := svc.CatalogSnapshot(); state.Index == nil || state.Verified || state.Status != "cached/offline" {
-		t.Fatal("separate offline cache was not restored", state)
+	if state := svc.CatalogSnapshot(); state.Index == nil || state.Verified || state.Status != "fresh" {
+		t.Fatal("new mode did not fetch the list immediately", state)
 	}
 }
