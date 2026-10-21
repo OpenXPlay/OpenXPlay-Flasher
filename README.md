@@ -18,11 +18,14 @@ Device profiles live in [`internal/profile/profiles`](./internal/profile/profile
 
 ## Build
 
-Requirements: Go 1.26 or later; on macOS the Xcode command line tools and libusb
-(`brew install libusb pkg-config`); Node.js 22 for the UI tests.
+Requirements: Go 1.26 or later; on macOS the Xcode command line tools, pkg-config and, for
+`make build` and the tests, libusb (`brew install libusb pkg-config`); Node.js 22 for the UI tests.
+`make app` builds its own universal libusb for macOS 12 and later (downloaded once) and the app with
+Go 1.26, the last Go that runs on macOS 12.
 
 ```bash
-make app        # macOS: dist/OpenXPlay Flasher.app
+make app        # macOS: dist/OpenXPlay Flasher.app (universal; SIGN_IDENTITY=... to sign)
+make dmg        # macOS: the disk image; make notarize submits it to Apple
 make windows    # Windows exes in dist/ (cross-built without cgo; lists USB devices through SetupAPI)
 make test       # Go, UI and cross-platform checks
 make dev        # run the app with the page read from internal/gui/assets

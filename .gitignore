@@ -2,5 +2,6 @@
 /openxplay-flasher
 /openxplay-flasher.exe
 /dist/
+/build/.cache/
 rsrc_windows_*.syso
 node_modules/

@@ -14,10 +14,11 @@
 
 ## 构建
 
-需要 Go 1.26 或更高版本；macOS 上还需要 Xcode 命令行工具和 libusb（`brew install libusb pkg-config`）；运行界面测试需要 Node.js 22。
+需要 Go 1.26 或更高版本；macOS 上还需要 Xcode 命令行工具、pkg-config，以及供 `make build` 和测试使用的 libusb（`brew install libusb pkg-config`）；运行界面测试需要 Node.js 22。`make app` 会自行构建适用于 macOS 12 及以上的通用 libusb（只需下载一次），并用 Go 1.26（可在 macOS 12 上运行的最后一个 Go 版本）构建应用。
 
 ```bash
-make app        # macOS：dist/OpenXPlay Flasher.app
+make app        # macOS：dist/OpenXPlay Flasher.app（通用二进制；设置 SIGN_IDENTITY=... 可签名）
+make dmg        # macOS：生成磁盘映像；make notarize 提交 Apple 公证
 make windows    # 在 dist/ 中生成 Windows exe（交叉编译，不使用 cgo；通过 SetupAPI 列出 USB 设备）
 make test       # Go、界面和跨平台检查
 make dev        # 运行应用，页面直接读取 internal/gui/assets

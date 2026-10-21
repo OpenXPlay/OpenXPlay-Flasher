@@ -1,0 +1,146 @@
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: AGPL-3.0-only
+# Created by riko chen on 2026-10-21
+
+# Builds, signs and publishes a release for a tag vX.Y.Z[-PRE]. Signing is optional per platform:
+# without its secrets a build is published ad hoc signed (macOS) or unsigned (Windows).
+#   macOS: MACOS_CERT_P12_BASE64, MACOS_CERT_PASSWORD, MACOS_SIGN_IDENTITY (Developer ID Application);
+#          notarization: NOTARY_KEY_BASE64 (.p8), NOTARY_KEY_ID, NOTARY_ISSUER.
+#   Windows: WINDOWS_CERT_PFX_BASE64, WINDOWS_CERT_PASSWORD.
+# Tags containing "-" are published as pre-releases; the annotated tag message is the release body.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    env:
+      MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_BASE64 }}
+      NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+      NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/cache@v4
+        with:
+          path: build/.cache
+          key: libusb-${{ hashFiles('build/libusb.sh') }}
+      - name: Install pkg-config
+        run: brew install pkg-config
+      - name: Import the signing certificate
+        if: env.MACOS_CERT_P12_BASE64 != ''
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 16)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          echo "SIGN_IDENTITY=$MACOS_SIGN_IDENTITY" >> "$GITHUB_ENV"
+      - name: Build the app and disk image
+        run: make dmg VERSION="${GITHUB_REF_NAME#v}" SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+      - name: Notarize
+        if: env.MACOS_CERT_P12_BASE64 != '' && env.NOTARY_KEY_BASE64 != ''
+        run: |
+          echo "$NOTARY_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          make notarize VERSION="${GITHUB_REF_NAME#v}" NOTARY_KEY="$RUNNER_TEMP/notary.p8"
+          rm -f "$RUNNER_TEMP/notary.p8"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: make windows VERSION="${GITHUB_REF_NAME#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: dist/*.exe
+          if-no-files-found: error
+
+  windows-sign:
+    needs: windows
+    runs-on: windows-latest
+    env:
+      WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-unsigned
+          path: dist
+      - name: Sign
+        if: env.WINDOWS_CERT_PFX_BASE64 != ''
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "cert.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
+          & $signtool.FullName sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 (Get-ChildItem dist\*.exe).FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item $pfx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.exe
+          if-no-files-found: error
+
+  publish:
+    needs: [macos, windows-sign]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "{macos,windows}"
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum *.dmg *.exe > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*.dmg, dist/*.exe"
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
+          pre=()
+          case "$GITHUB_REF_NAME" in *-*) pre=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "OpenXPlay Flasher $GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/notes.md" "${pre[@]}" dist/*.dmg dist/*.exe dist/SHA256SUMS

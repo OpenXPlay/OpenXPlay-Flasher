@@ -14,15 +14,25 @@ VERSION   := $(or $(VERSION),dev)
 COMMIT    ?= $(shell git rev-parse --short HEAD 2>/dev/null)
 LDFLAGS   := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT)
 TAGS      := production
-# Numeric part of the version for Windows file versions (0.1.0-rc.1 -> 0.1.0).
-WINVER    := $(shell echo '$(VERSION)' | sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
+# Numeric part of the version, for Windows file versions and the macOS bundle version, which
+# take numbers only (0.1.0-rc.1 -> 0.1.0).
+NUMVER    := $(shell echo '$(VERSION)' | sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
 
 # macOS: keep in step with LSMinimumSystemVersion in build/darwin/Info.plist.
 MACOS_MIN := 12.0
 export CGO_CFLAGS  += -mmacosx-version-min=$(MACOS_MIN)
 export CGO_LDFLAGS += -mmacosx-version-min=$(MACOS_MIN)
+# The app is built with the last Go that runs on macOS 12 (Go 1.27 needs macOS 13), against the
+# libusb that build/libusb.sh builds (keep the version in step with it).
+APP_GO    := go1.26.10
+LIBUSB    := $(CURDIR)/build/.cache/libusb-1.0.30
+DMG       := dist/OpenXPlay-Flasher-$(VERSION)-macos-universal.dmg
+# Code signing: - is ad hoc; a Developer ID Application identity signs for release, with the
+# hardened runtime and a secure timestamp.
+SIGN_IDENTITY ?= -
+SIGN      := codesign --force --sign "$(SIGN_IDENTITY)" $(if $(filter-out -,$(SIGN_IDENTITY)),--options runtime --timestamp)
 
-.PHONY: build dev web cli test test-go test-ui vet-cross app windows icons clean
+.PHONY: build dev web cli test test-go test-ui vet-cross app dmg notarize windows checksums icons clean
 
 build:
 	go build -tags "$(TAGS)" -trimpath -ldflags="$(LDFLAGS)" -o $(BIN) .
@@ -53,32 +63,66 @@ vet-cross:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./...
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go vet -tags nogui ./...
 
-# macOS app bundle in dist/, with libusb inside it so the app runs without Homebrew. The bundle is
-# signed ad hoc only (arm64 needs a signature to start); release signing comes later.
-app: build
+# macOS app bundle in dist/: one universal binary (arm64, x86_64) with libusb inside the bundle, so
+# the app runs without Homebrew. make build stays host-only and uses the libusb pkg-config finds.
+app:
+	@bash build/libusb.sh >/dev/null
 	@rm -rf "dist/$(APP)"
 	@mkdir -p "dist/$(APP)/Contents/MacOS" "dist/$(APP)/Contents/Resources" "dist/$(APP)/Contents/Frameworks"
-	@cp $(BIN) "dist/$(APP)/Contents/MacOS/$(BIN)"
+	@for a in arm64:arm64 amd64:x86_64; do goarch=$${a%:*} arch=$${a#*:}; \
+		GOTOOLCHAIN=$(APP_GO) CGO_ENABLED=1 GOOS=darwin GOARCH=$$goarch CC="clang -arch $$arch" \
+		CGO_CFLAGS="-arch $$arch -mmacosx-version-min=$(MACOS_MIN)" \
+		CGO_LDFLAGS="-arch $$arch -mmacosx-version-min=$(MACOS_MIN)" \
+		PKG_CONFIG_PATH="$(LIBUSB)/$$arch/lib/pkgconfig" PKG_CONFIG_LIBDIR="$(LIBUSB)/$$arch/lib/pkgconfig" \
+		go build -tags "$(TAGS)" -trimpath -o dist/$(BIN)-darwin-$$goarch \
+			-ldflags="$(LDFLAGS) -extldflags=-Wl,-rpath,@executable_path/../Frameworks" . || exit 1; \
+	done
+	@lipo -create -output "dist/$(APP)/Contents/MacOS/$(BIN)" dist/$(BIN)-darwin-arm64 dist/$(BIN)-darwin-amd64
+	@rm -f dist/$(BIN)-darwin-arm64 dist/$(BIN)-darwin-amd64
+	@cp "$(LIBUSB)/universal/libusb-1.0.0.dylib" "dist/$(APP)/Contents/Frameworks/libusb-1.0.0.dylib"
 	@cp build/darwin/$(BIN).icns "dist/$(APP)/Contents/Resources/$(BIN).icns"
-	@sed 's/@VERSION@/$(VERSION)/' build/darwin/Info.plist > "dist/$(APP)/Contents/Info.plist"
-	@lib=$$(otool -L $(BIN) | awk '/libusb-1\.0/ {print $$1; exit}'); \
-	test -n "$$lib" || { echo "the binary does not link libusb"; exit 1; }; \
-	cp "$$lib" "dist/$(APP)/Contents/Frameworks/libusb-1.0.0.dylib"; \
-	chmod u+w "dist/$(APP)/Contents/Frameworks/libusb-1.0.0.dylib"; \
-	install_name_tool -id @rpath/libusb-1.0.0.dylib "dist/$(APP)/Contents/Frameworks/libusb-1.0.0.dylib"; \
-	install_name_tool -change "$$lib" @executable_path/../Frameworks/libusb-1.0.0.dylib "dist/$(APP)/Contents/MacOS/$(BIN)"
-	@codesign --force --sign - "dist/$(APP)/Contents/Frameworks/libusb-1.0.0.dylib"
-	@codesign --force --sign - "dist/$(APP)"
+	@sed 's/@VERSION@/$(or $(NUMVER),0.0.0)/' build/darwin/Info.plist > "dist/$(APP)/Contents/Info.plist"
+	@$(SIGN) "dist/$(APP)/Contents/Frameworks/libusb-1.0.0.dylib"
+	@$(SIGN) "dist/$(APP)"
+	@codesign --verify --deep --strict "dist/$(APP)"
 	@echo "  dist/$(APP)"
+
+# Disk image with the app and a link to /Applications, signed unless SIGN_IDENTITY is ad hoc.
+dmg: app
+	@rm -rf dist/dmg "$(DMG)" && mkdir -p dist/dmg
+	@ditto "dist/$(APP)" "dist/dmg/$(APP)" && ln -s /Applications dist/dmg/Applications
+	@hdiutil create -quiet -volname "OpenXPlay Flasher" -srcfolder dist/dmg -fs HFS+ -format UDZO -ov "$(DMG)"
+	@rm -rf dist/dmg
+	@if [ "$(SIGN_IDENTITY)" != "-" ]; then codesign --force --timestamp --sign "$(SIGN_IDENTITY)" "$(DMG)"; fi
+	@echo "  $(DMG)"
+
+# Notarizes and staples the disk image made by make dmg. Credentials: NOTARY_PROFILE (a notarytool
+# keychain profile), or an App Store Connect API key: NOTARY_KEY (.p8 path), NOTARY_KEY_ID and,
+# for a team key, NOTARY_ISSUER. notarytool can exit 0 for a rejected upload; stapling then fails.
+notarize:
+	@test -f "$(DMG)" || { echo "$(DMG) is missing: run make dmg"; exit 1; }
+	@if [ -n "$(NOTARY_PROFILE)" ]; then \
+		xcrun notarytool submit "$(DMG)" --wait --keychain-profile "$(NOTARY_PROFILE)"; \
+	elif [ -n "$(NOTARY_KEY)" ] && [ -n "$(NOTARY_KEY_ID)" ]; then \
+		xcrun notarytool submit "$(DMG)" --wait --key "$(NOTARY_KEY)" --key-id "$(NOTARY_KEY_ID)" \
+			$(if $(NOTARY_ISSUER),--issuer "$(NOTARY_ISSUER)"); \
+	else echo "set NOTARY_PROFILE, or NOTARY_KEY, NOTARY_KEY_ID and NOTARY_ISSUER"; exit 1; fi
+	xcrun stapler staple "$(DMG)"
 
 windows:
 	@mkdir -p dist
 	go run github.com/tc-hib/go-winres@v0.3.3 make --in build/windows/winres.json --arch amd64,arm64 \
-		--out rsrc --file-version "$(or $(WINVER),0.0.0)" --product-version "$(or $(WINVER),0.0.0)"
+		--out rsrc --file-version "$(or $(NUMVER),0.0.0)" --product-version "$(or $(NUMVER),0.0.0)"
 	@for arch in amd64 arm64; do \
 		CGO_ENABLED=0 GOOS=windows GOARCH=$$arch go build -tags "$(TAGS)" -trimpath \
 			-ldflags="$(LDFLAGS) -H windowsgui" -o dist/$(BIN)-windows-$$arch.exe . || exit 1; \
 	done; rm -f rsrc_windows_*.syso
+
+# SHA256SUMS for the release files in dist/.
+checksums:
+	@cd dist && files=$$(ls *.dmg *.exe *.tar.bz2 2>/dev/null); \
+	test -n "$$files" || { echo "no release files in dist/"; exit 1; }; \
+	shasum -a 256 $$files > SHA256SUMS && cat SHA256SUMS
 
 # Regenerates the committed icons from build/icon/openxplay.png (macOS: sips and iconutil).
 icons:
