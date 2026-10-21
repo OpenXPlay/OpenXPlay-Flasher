@@ -33,7 +33,7 @@ DMG       := dist/OpenXPlay-Flasher-$(VERSION)-macos-universal.dmg
 SIGN_IDENTITY ?= -
 SIGN      := codesign --force --sign "$(SIGN_IDENTITY)" $(if $(filter-out -,$(SIGN_IDENTITY)),--options runtime --timestamp)
 
-.PHONY: build dev web cli test test-go test-ui vet-cross app dmg notarize windows checksums icons clean
+.PHONY: build dev web cli catalog-tool test test-go test-ui vet-cross app dmg notarize windows checksums icons clean
 
 build:
 	go build -tags "$(TAGS)" -trimpath -ldflags="$(LDFLAGS)" -o $(BIN) .
@@ -48,6 +48,11 @@ web:
 
 cli:
 	go build -tags nogui -trimpath -ldflags="$(LDFLAGS)" -o $(BIN) .
+
+# A separate maintainer tool; it has no GUI, USB or application dependencies.
+catalog-tool:
+	@mkdir -p dist
+	go build -trimpath -o dist/oxp-catalog ./cmd/oxp-catalog
 
 test: test-go test-ui vet-cross
 
