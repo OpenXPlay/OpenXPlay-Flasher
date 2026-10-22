@@ -47,6 +47,8 @@ func (d *scriptDevice) Shell(ctx context.Context, cmd string) (adb.Result, error
 	}
 	out := ""
 	switch {
+	case cmd == packageMaintenanceProbe:
+		out = "free\n"
 	case cmd == factsCommand:
 		out = "root\t0\nkernel\t5.15.0-handsomekernel+\nmodel\tHandsome Openstick\ndebian\t11\narch\tarm64\n"
 	case strings.HasPrefix(cmd, "dpkg-query "):
@@ -300,7 +302,7 @@ func TestExecutorStopsOnFailure(t *testing.T) {
 			n := 0
 			e.Guard = func(context.Context) error {
 				n++
-				if n >= 4 {
+				if n >= 5 {
 					return &Problem{Code: "no-device"}
 				}
 				return nil

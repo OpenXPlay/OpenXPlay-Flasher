@@ -51,7 +51,20 @@ func TestN1LayersOverSSHAndReboot(t *testing.T) {
 	}
 	scripted := newScriptDevice(t, device, relay)
 	var mu sync.Mutex
+	maintenanceProbes, installAttempts := 0, 0
 	scripted.hook = func(ctx context.Context, cmd string) (adb.Result, error, bool) {
+		if cmd == packageMaintenanceProbe {
+			maintenanceProbes++
+			if maintenanceProbes == 1 {
+				return adb.Result{Stdout: []byte("busy\n")}, nil, true
+			}
+		}
+		if strings.Contains(cmd, "openxplay-relay-update --sha256") {
+			installAttempts++
+			if installAttempts == 1 {
+				return adb.Result{ExitCode: 1, Stderr: []byte("dpkg: error: dpkg frontend lock was locked by another process")}, nil, true
+			}
+		}
 		if cmd == factsCommand {
 			return adb.Result{Stdout: []byte("root\t0\nkernel\t6.12.999-ophub\nmodel\tPhicomm N1\ndebian\t13\narch\tarm64\npretty\tDebian GNU/Linux 13 (trixie)\n")}, nil, true
 		}
@@ -119,6 +132,7 @@ func TestN1LayersOverSSHAndReboot(t *testing.T) {
 	e.Connect = connector.Connect
 	e.Guard = func(context.Context) error { return nil }
 	e.PollInterval = time.Millisecond
+	e.MaintenanceInterval = time.Millisecond
 	e.RebootTimeout = time.Second
 	job := e.Run(context.Background(), plan)
 	if job.Status != "succeeded" || job.Installed.Layers["device"] != "0.1.0" || job.Installed.Layers["relay"] != rm.Version {
@@ -129,6 +143,9 @@ func TestN1LayersOverSSHAndReboot(t *testing.T) {
 	}
 	if !strings.Contains(job.Log, "Device returned after reboot") {
 		t.Fatal("missing reconnect")
+	}
+	if maintenanceProbes < 4 || installAttempts != 2 || !strings.Contains(job.Log, PackageMaintenanceMessage) {
+		t.Fatal("SSH maintenance wait or lock retry was skipped")
 	}
 	// The same generic relay payload can be used by multiple profiles when it declares no
 	// device-specific OS restriction, including the original sidecar's adb transport spelling.

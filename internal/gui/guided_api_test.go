@@ -79,7 +79,7 @@ func (d *guidedDevice) Shell(ctx context.Context, cmd string) (adb.Result, error
 		return adb.Result{}, nil
 	}
 	d.mu.Unlock()
-	if strings.Contains(cmd, "systemctl is-active") {
+	if strings.Contains(cmd, "systemctl is-active openxplay-relay.service") {
 		d.mu.Lock()
 		fail := d.failVerify
 		d.mu.Unlock()

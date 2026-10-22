@@ -480,6 +480,7 @@ function jobView(job) {
   const parts = [el("h2", { id: "install-job-title", tabindex: "-1" }, t("Installation progress")),
     job.status === "running" ? el("p", { role: "status" }, active ? t("Installing {layer}: {step}", { layer: name(active.layer), step: stepLabel(active) }) : t("Starting installation…")) : "",
     el("p", { id: "install-elapsed" }, t("Elapsed: {time}", { time: elapsed(job) }))];
+  if (job.status === "running" && job.progress) parts.push(el("p", { role: "status" }, job.progress));
   if (active && job.status === "running") parts.push(el("div", { class: "phase-warning " + phaseStyle(active), role: "alert" }, [
     el("strong", {}, t(PHASE_TEXT[phaseGroups(job.steps).find((g) => g.steps.includes(active)).phase] || "Installation progress")),
     el("p", {}, view.state.target?.device?.connection === "network" ? t("Keep the box powered and connected to the network until installation finishes.") : active.critical ? t("Do not unplug the device or cut its power") : active.resumable ? t("If this is interrupted, it can be repeated") : ""),

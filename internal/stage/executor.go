@@ -26,6 +26,7 @@ type StepProgress struct {
 // Job is an immutable snapshot sent to the shells after each change. Installed is the last read
 // of dpkg; Observed says whether that read describes the device after this job finished.
 type Job struct {
+	Progress  string            `json:"progress,omitempty"`
 	Retryable bool              `json:"retryable"`
 	Transfer  *TransferProgress `json:"transfer,omitempty"`
 	Profile   string            `json:"profile,omitempty"`
@@ -61,18 +62,20 @@ type TransferProgress struct {
 // a bus or starts another job; the service holds its shared device lock for the entire run.
 type Executor struct {
 	// Confirm binds an existing connection to the job identity without opening a second USB handle.
-	Confirm        func(context.Context, adb.Device) error
-	Checkpoint     func(context.Context, Step, string) error
-	Connect        func(context.Context) (adb.Device, error)
-	Guard          func(context.Context) error
-	Profile        profile.Profile
-	Packages       []*Package
-	Emit           func(Job)
-	Now            func() time.Time
-	RebootTimeout  time.Duration
-	VerifyTimeout  time.Duration
-	PollInterval   time.Duration
-	VerifyInterval time.Duration
+	Confirm             func(context.Context, adb.Device) error
+	Checkpoint          func(context.Context, Step, string) error
+	Connect             func(context.Context) (adb.Device, error)
+	Guard               func(context.Context) error
+	Profile             profile.Profile
+	Packages            []*Package
+	Emit                func(Job)
+	Now                 func() time.Time
+	RebootTimeout       time.Duration
+	VerifyTimeout       time.Duration
+	PollInterval        time.Duration
+	VerifyInterval      time.Duration
+	MaintenanceTimeout  time.Duration
+	MaintenanceInterval time.Duration
 
 	dev            adb.Device
 	job            Job
@@ -84,7 +87,8 @@ type Executor struct {
 
 func NewExecutor(p profile.Profile, packages []*Package) *Executor {
 	return &Executor{Profile: p, Packages: packages, Now: time.Now, RebootTimeout: 120 * time.Second,
-		VerifyTimeout: 90 * time.Second, PollInterval: 2 * time.Second, VerifyInterval: 5 * time.Second}
+		VerifyTimeout: 90 * time.Second, PollInterval: 2 * time.Second, VerifyInterval: 5 * time.Second,
+		MaintenanceTimeout: 3 * time.Minute, MaintenanceInterval: 2 * time.Second}
 }
 
 func (e *Executor) publish() {
@@ -118,17 +122,26 @@ func (e *Executor) run(ctx context.Context, command string) (adb.Result, error) 
 func (e *Executor) command(ctx context.Context, command, success string) error {
 	r, err := e.run(ctx, command)
 	if err != nil {
+		if detail := commandDetails(r); detail != "" {
+			return fmt.Errorf("%w: %s", err, detail)
+		}
 		return err
 	}
 	last := lastStage(string(r.Stdout))
+	if marker := lastStage(string(r.Stderr)); marker != "" {
+		last = marker
+	}
 	if matchesMarker(last, "OXP-STAGE relay rolled-back") {
-		return &Problem{"rolled-back", ""}
+		detail := commandDetails(r)
+		return &commandError{exit: r.ExitCode, detail: detail,
+			lock:    r.ExitCode != 0 && dpkgLockError(string(r.Stdout)+"\n"+string(r.Stderr)),
+			problem: &Problem{"rolled-back", detail}}
 	}
 	if r.ExitCode != 0 {
-		return fmt.Errorf("exit %d: %s", r.ExitCode, strings.TrimSpace(string(r.Stderr)))
+		return &commandError{exit: r.ExitCode, detail: commandDetails(r), lock: dpkgLockError(string(r.Stdout) + "\n" + string(r.Stderr))}
 	}
 	if success != "" && !matchesMarker(last, success) {
-		return &Problem{"success-line", success}
+		return &Problem{"success-line", success + "; device output / 设备输出: " + commandDetails(r)}
 	}
 	return nil
 }
@@ -276,6 +289,13 @@ func (e *Executor) Run(ctx context.Context, plan Plan) Job {
 }
 
 func (e *Executor) step(ctx context.Context, s Step, pkg *Package) error {
+	// Package scripts can invoke dpkg during preflight as well as installation. This wait has
+	// its own three-minute budget, separate from the command's timeout below.
+	if s.Action == "preflight" || s.Action == "install" {
+		if err := e.waitPackageMaintenance(ctx); err != nil {
+			return err
+		}
+	}
 	timeout := 2 * time.Minute
 	if s.Action == "install" {
 		timeout = 10 * time.Minute
@@ -313,7 +333,10 @@ func (e *Executor) step(ctx context.Context, s Step, pkg *Package) error {
 		e.facts, e.job.Installed = f, &f
 		return e.confirm(f, pkg)
 	case "clock":
-		return e.command(stepCtx, fmt.Sprintf("date -u -s @%d", e.Now().Unix()), "")
+		if err := e.command(stepCtx, fmt.Sprintf("date -u -s @%d", e.Now().Unix()), ""); err != nil {
+			return err
+		}
+		return e.waitPackageMaintenance(ctx)
 	case "prepare":
 		return e.command(stepCtx, "umask 077; mkdir -p "+quote(m.DeviceDir), "")
 	case "push":
@@ -344,7 +367,26 @@ func (e *Executor) step(ctx context.Context, s Step, pkg *Package) error {
 			// adapted to the same marker contract; verification and dpkg readback still follow.
 			cmd = "(" + m.FirstInstall + ") && printf '%s\\n' " + quote(m.Success.Install)
 		}
-		return e.command(stepCtx, inDir(cmd), m.Success.Install)
+		err := e.command(stepCtx, inDir(cmd), m.Success.Install)
+		var failed *commandError
+		if !errors.As(err, &failed) || !failed.lock {
+			return err
+		}
+		e.log("The device's package lock was taken; waiting before one retry / 设备的软件包锁被占用，等待后重试一次\n")
+		if err := e.waitPackageMaintenance(ctx); err != nil {
+			return err
+		}
+		retryCtx, stop := context.WithTimeout(ctx, timeout)
+		defer stop()
+		if err := e.Guard(retryCtx); err != nil {
+			return err
+		}
+		if e.Confirm != nil {
+			if err := e.Confirm(retryCtx, e.dev); err != nil {
+				return err
+			}
+		}
+		return e.command(retryCtx, inDir(cmd), m.Success.Install)
 	case "reboot":
 		r, err := e.run(stepCtx, "cat /proc/sys/kernel/random/boot_id")
 		if err != nil {

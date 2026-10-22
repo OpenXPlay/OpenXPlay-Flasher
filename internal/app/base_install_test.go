@@ -119,6 +119,8 @@ func (d *baseTestDevice) Serial() string { return "board1" }
 func (d *baseTestDevice) Shell(_ context.Context, cmd string) (adb.Result, error) {
 	out := ""
 	switch {
+	case strings.Contains(cmd, "for file in /var/lib/dpkg/lock"):
+		out = "free\n"
 	case cmd == "cat /proc/cmdline":
 		serial := d.serial
 		if serial == "" {

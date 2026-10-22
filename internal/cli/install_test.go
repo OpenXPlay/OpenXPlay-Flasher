@@ -32,6 +32,8 @@ type cliDevice struct {
 func (d *cliDevice) Shell(_ context.Context, cmd string) (adb.Result, error) {
 	out := ""
 	switch {
+	case strings.Contains(cmd, "for file in /var/lib/dpkg/lock"):
+		out = "free\n"
 	case cmd == "cat /proc/cmdline":
 		out = "androidboot.serialno=cli-board"
 	case strings.Contains(cmd, "uname -r"):
@@ -106,11 +108,15 @@ func TestCLIInstallConfirmationAndYes(t *testing.T) {
 		name, input string
 		yes         bool
 		want        int
-	}{{"cancel", "n\n", false, 0}, {"confirm", "y\n", false, 1}, {"yes", "", true, 1}} {
+	}{{"cancel", "n\n", false, 0}, {"EOF after y", "y", false, 0}, {"confirm", "y\n", false, 1}, {"yes", "", true, 1}} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out, errOut bytes.Buffer
 			svc, dev, deb := cliInstallFixture(t, &out)
-			if code := runInstall(svc, []string{deb}, "relay", false, tc.yes, strings.NewReader(tc.input), &out, &errOut); code != 0 {
+			wantCode := 0
+			if tc.want == 0 {
+				wantCode = 1
+			}
+			if code := runInstall(svc, []string{deb}, "relay", false, tc.yes, strings.NewReader(tc.input), &out, &errOut); code != wantCode {
 				t.Fatalf("exit=%d stderr=%s", code, &errOut)
 			}
 			if dev.installs != tc.want {

@@ -45,6 +45,8 @@ type installDevice struct {
 
 func (d *installDevice) Shell(ctx context.Context, cmd string) (adb.Result, error) {
 	switch {
+	case strings.Contains(cmd, "for file in /var/lib/dpkg/lock"):
+		return adb.Result{Stdout: []byte("free\n")}, nil
 	case cmd == "cat /proc/cmdline":
 		return adb.Result{Stdout: []byte("androidboot.serialno=fixture-board")}, nil
 	case strings.Contains(cmd, "uname -r"):
@@ -334,7 +336,7 @@ func TestInstallRescansBeforeEachWrite(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	state, err := svc.InstallWait(ctx)
-	if err != nil || state.Job.Status != "failed" || state.Job.Problem.Code != "no-device" || state.Job.Steps[state.Job.Failed].Action != "prepare" || dev.pushes != 0 {
+	if err != nil || state.Job.Status != "failed" || state.Job.Problem.Code != "no-device" || state.Job.Steps[state.Job.Failed].Action != "clock" || dev.pushes != 0 {
 		t.Fatalf("job=%+v err=%v", state.Job, err)
 	}
 }

@@ -77,10 +77,9 @@ func runInstall(svc *app.Service, files []string, only string, downgrade, yes bo
 	fmt.Fprintln(stdout, "Bluetooth and the relay restart; the device layer reboots the device once. CarPlay stops for a while. Do not install while driving. Keep the USB cable connected.")
 	if !yes {
 		fmt.Fprint(stdout, "Start installation? Type y: ")
-		answer, _ := bufio.NewReader(stdin).ReadString('\n')
-		if strings.TrimSpace(answer) != "y" {
-			fmt.Fprintln(stdout, "Cancelled.")
-			return 0
+		if !confirmInstall(ctx, stdin) {
+			fmt.Fprintln(stderr, "Installation cancelled / 已取消安装")
+			return 1
 		}
 	}
 	if _, err := svc.InstallStart(ctx, stage.Request{Choice: choice, Downgrade: downgrade}); err != nil {
@@ -108,6 +107,25 @@ func runInstall(svc *app.Service, files []string, only string, downgrade, yes bo
 	}
 	fmt.Fprintln(stdout, "Next: add identity.pk8 and certificate.p7b in the relay admin page, then set up networking. / 下一步：在中继管理页面添加 identity.pk8 和 certificate.p7b，再配置网络。")
 	return 0
+}
+
+// A complete line confirms the prompt. EOF, a read error or Ctrl-C cancels it; the buffered
+// channel lets the terminal reader finish if the caller's context is cancelled first.
+func confirmInstall(ctx context.Context, stdin io.Reader) bool {
+	if stdin == nil || ctx.Err() != nil {
+		return false
+	}
+	answer := make(chan bool, 1)
+	go func() {
+		line, err := bufio.NewReader(stdin).ReadString('\n')
+		answer <- err == nil && strings.TrimSpace(line) == "y"
+	}()
+	select {
+	case confirmed := <-answer:
+		return confirmed && ctx.Err() == nil
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func printPlanProblem(w io.Writer, p *stage.Problem) {

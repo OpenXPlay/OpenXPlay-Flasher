@@ -5,7 +5,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -92,7 +91,11 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 	stockLocation := fs.String("stock-location", "", "explicitly designate this USB location / 明确指定 USB 端口")
 	downgrade := fs.Bool("downgrade", false, "allow an older relay / 允许旧版中继")
 	yes := fs.Bool("yes", false, "skip the y prompt (never the serial check) / 跳过 y 提示，仍须验证序列号")
+	fs.Usage = func() { fmt.Fprint(stderr, usage); fs.PrintDefaults() }
 	if err := fs.Parse(interspersed(args)); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	positional := fs.Args()
@@ -122,8 +125,15 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 		if len(positional) != 1 {
 			return usageError()
 		}
-	case "devices":
+	case "devices", "status":
 		if len(positional) != 0 {
+			return usageError()
+		}
+	case "files":
+		if len(positional) != 0 || *choice == "" {
+			return usageError()
+		}
+		if !validChoice(*choice) {
 			return usageError()
 		}
 	case "config-get":
@@ -144,16 +154,15 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 		if *only != "" && *only != "device" && *only != "relay" {
 			return usageError()
 		}
-		valid := false
-		for _, id := range []string{"stock", "base", "full-reinstall", "repair", "full", "device", "relay"} {
-			valid = valid || id == *choice
-		}
-		if !valid {
+		if !validChoice(*choice) {
 			return usageError()
 		}
 	}
-	hardware := !sshOptions.enabled() && (cmd == "fastboot" || cmd == "designate-stock" || cmd == "plan" || cmd == "install" || cmd == "devices" || cmd == "config-get" || cmd == "config-put")
-	if sshOptions.enabled() && cmd != "devices" && cmd != "plan" && cmd != "install" && cmd != "config-get" && cmd != "config-put" {
+	hardware := !sshOptions.enabled() && (cmd == "fastboot" || cmd == "designate-stock" || cmd == "plan" || cmd == "install" || cmd == "devices" || cmd == "status" || cmd == "files" || cmd == "config-get" || cmd == "config-put")
+	if sshOptions.enabled() && cmd != "devices" && cmd != "status" && cmd != "files" && cmd != "plan" && cmd != "install" && cmd != "config-get" && cmd != "config-put" {
+		return usageError()
+	}
+	if sshOptions.enabled() && (*stockADB != "" || *stockLocation != "") {
 		return usageError()
 	}
 	var events app.Events = &enginePrinter{out: stderr, json: *asJSON}
@@ -227,6 +236,49 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	show := func() { _, _ = svc.CatalogShow(ctx) }
 	output := func(v any) int { return writeEngineResult(stdout, stderr, v, *asJSON) }
+	if cmd == "status" || cmd == "files" {
+		// These observations use the cache only, including when the cache is unavailable.
+		show()
+		if *stockLocation != "" {
+			if _, err = svc.DesignateStock(ctx, *stockLocation); err != nil {
+				return failure(err)
+			}
+		}
+		if *stockADB != "" {
+			if _, err = svc.DesignateStockSerial(ctx, *stockADB); err != nil {
+				return failure(err)
+			}
+		}
+		if cmd == "status" {
+			state := svc.Status(ctx)
+			if *asJSON {
+				if code := writeJSON(stdout, stderr, state); code != 0 {
+					return code
+				}
+			} else {
+				printStatus(stdout, state)
+			}
+			if state.Problem != nil && state.Problem.Code != "no-device" {
+				return 1
+			}
+			return 0
+		}
+		state, err := svc.Files(ctx, *choice)
+		if err != nil {
+			return failure(err)
+		}
+		if *asJSON {
+			if code := writeJSON(stdout, stderr, state); code != 0 {
+				return code
+			}
+		} else {
+			printFiles(stdout, state)
+		}
+		if !state.AllFound {
+			return 3
+		}
+		return 0
+	}
 
 	switch cmd {
 	case "catalog":
@@ -382,10 +434,8 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 			return failure(&stage.Problem{Code: "confirmation", Detail: "use --yes / 请使用 --yes"})
 		}
 		fmt.Fprint(stdout, "Start installation? Type y / 开始安装？输入 y: ")
-		answer, _ := bufio.NewReader(stdin).ReadString('\n')
-		if strings.TrimSpace(answer) != "y" {
-			fmt.Fprintln(stdout, "Cancelled / 已取消")
-			return 0
+		if !confirmInstall(ctx, stdin) {
+			return failure(&stage.Problem{Code: "cancelled", Detail: "Installation cancelled / 已取消安装"})
 		}
 	}
 	svc.Start(ctx)
@@ -415,7 +465,18 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 		return failure(state.Job.Problem)
 	}
 	fmt.Fprintln(stdout, "Installation succeeded. / 安装成功。")
+	if state.Job.Installed != nil {
+		printVersions(stdout, "Installed / 已安装", state.Job.Installed.Layers)
+	}
 	return 0
+}
+
+func validChoice(choice string) bool {
+	switch choice {
+	case "stock", "base", "full-reinstall", "repair", "full", "device", "relay":
+		return true
+	}
+	return false
 }
 func printEnginePlan(w io.Writer, c stage.Choice) {
 	name := c.ID
@@ -437,12 +498,13 @@ func printEnginePlan(w io.Writer, c stage.Choice) {
 }
 
 type enginePrinter struct {
-	mu   sync.Mutex
-	out  io.Writer
-	json bool
-	last string
-	at   time.Time
-	seen map[string]string
+	mu       sync.Mutex
+	out      io.Writer
+	json     bool
+	last     string
+	at       time.Time
+	seen     map[string]string
+	progress string
 }
 
 func (p *enginePrinter) Emit(name string, data any) {
@@ -456,6 +518,16 @@ func (p *enginePrinter) Emit(name string, data any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if state.Job != nil {
+		if state.Job.Progress != p.progress {
+			p.progress = state.Job.Progress
+			if p.progress != "" {
+				if p.json {
+					_ = json.NewEncoder(p.out).Encode(map[string]any{"type": "progress", "message": p.progress})
+				} else {
+					fmt.Fprintln(p.out, p.progress)
+				}
+			}
+		}
 		for _, step := range state.Job.Steps {
 			if step.Status == "running" {
 				key := step.ID + step.Layer + step.Action

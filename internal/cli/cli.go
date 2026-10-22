@@ -31,6 +31,13 @@ Commands:
   (none), app      start the desktop app
   version          print the build identity
   devices          list candidate devices once
+  status [-json] [--stock-adb SERIAL] [--ssh …]
+                   show all candidates, installed/recommended versions and choices / 显示候选设备、已装及推荐版本和方案
+                   reads the cached signed package list; never reads identity contents / 使用本地签名列表，不读取身份文件内容
+  files --choice ID [--stock-adb SERIAL] [-json] [--ssh …]
+                   list required signed files, URLs and checked local paths; never download / 列出所需签名文件、链接和已校验本地路径，不下载
+                   run catalog fetch first / 请先运行 catalog fetch
+                   exit 0: all found; 3: missing files; 1: error; 2: usage / 退出码：0 全部找到，3 缺少文件，1 错误，2 参数错误
   watch            print candidate devices whenever they change (Ctrl-C to stop)
   profiles         list the supported device models and their layers
   install [-only device|relay] [-downgrade] [-yes] PACKAGE...
@@ -48,8 +55,12 @@ Commands:
   designate-stock LOCATION
                    designate stock adb for this session / 为本次会话指定原厂 adb
   plan --choice ID print steps without running them / 仅显示方案步骤
-  install --choice ID [--yes-erase SERIAL] [--stock-adb SERIAL] [PACKAGE...]
+  install --choice ID [-yes] [--yes-erase SERIAL] [--stock-adb SERIAL] [PACKAGE...]
                    install from chosen local files / 从所选本地文件安装
+                   -yes skips Type y for non-erasing choices; cancelling exits nonzero / 非擦除方案用 -yes 跳过确认，取消时以非零退出
+                   erasing choices always require --yes-erase SERIAL / 擦除方案始终需要 --yes-erase 序列号
+                   waits up to 3 minutes for device package maintenance; retries a locked install once
+                   等待设备的软件包维护，最多 3 分钟；安装因锁被占用而失败时重试一次
                    choices: stock, base, full-reinstall, repair, full, device, relay
                    --choice full-reinstall --base-plan repair: C + device + relay / 修复并完整安装
   identity status [--ssh …]
@@ -64,8 +75,10 @@ Commands:
   web              serve the app's page to a browser on this computer, for UI work
 
 Flags:
+  --stock-adb SERIAL
+                   status, files, plan, install: check and designate stock adb for this call / 检查并为本次调用指定原厂 adb
   --ssh [user@]host[:port]
-                   devices, plan, install, identity, admin, config-get, config-put: SSH / 通过 SSH 连接
+                   status, files, devices, plan, install, identity, admin, config-get, config-put: SSH / 通过 SSH 连接
   --ssh-key FILE   optional private key / 可选私钥文件
   --accept-host-key SHA256:…
                    accept a verified first-use fingerprint / 接受已核对的首次连接指纹
@@ -74,7 +87,7 @@ Flags:
   --no-signature-check
                    catalog, import, backup, plan, install: ignore the package list signature
                    忽略软件包列表签名；仍校验文件 SHA-256，仍执行基础系统固定值和清单检查
-  -json            devices, version, watch: print JSON instead of text
+  -json            status, files, devices, version, watch, plan, install: print JSON instead of text / 输出 JSON
   -restart         config-put: restart the relay after writing
   -addr host:port  web: loopback address to listen on (default 127.0.0.1:0)
 `
@@ -92,7 +105,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	switch cmd {
 	case "identity", "admin":
 		return runNextStepsCLI(cmd, args[1:], os.Stdin, stdout, stderr)
-	case "catalog", "import", "backup", "fastboot", "designate-stock", "plan", "install", "devices", "config-get", "config-put":
+	case "catalog", "import", "backup", "fastboot", "designate-stock", "plan", "install", "devices", "status", "files", "config-get", "config-put":
 		return runEngineCLI(cmd, args[1:], os.Stdin, stdout, stderr)
 	}
 	if cmd == "help" || cmd == "-h" || cmd == "--help" {
