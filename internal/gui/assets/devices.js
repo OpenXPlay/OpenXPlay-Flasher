@@ -36,6 +36,12 @@ export function usbPort(usb) {
   return path.length ? usb.bus + "-" + path.join(".") : String(usb.bus);
 }
 
+// Advertised adb metadata is only a label; discovery and designation still use the USB port.
+export function ignoredDeviceLabel(candidate) {
+  return [candidate.adbName || usbId(candidate.usb), candidate.adbSerial || candidate.usb.serial,
+    usbPort(candidate.usb)].filter(Boolean).join(" · ");
+}
+
 // text picks a profile string in the UI language, falling back to English.
 export function text(t, lang) {
   return (t && (t[lang] || t.en)) || "";

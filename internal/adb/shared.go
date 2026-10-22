@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"sync"
 	"sync/atomic"
 
@@ -42,6 +43,7 @@ type SharedConnector struct {
 	Connector Connector
 	mu        sync.Mutex
 	entries   map[string]*sharedEntry
+	known     map[string]Metadata
 }
 type sharedEntry struct {
 	Device
@@ -59,15 +61,20 @@ func Share(c Connector) Connector {
 	if c == nil {
 		return nil
 	}
-	return &SharedConnector{Connector: c, entries: map[string]*sharedEntry{}}
+	return &SharedConnector{Connector: c, entries: map[string]*sharedEntry{}, known: map[string]Metadata{}}
 }
+
+func usbKey(dev usb.DeviceInfo) string {
+	return fmt.Sprintf("%s/%s/%d/%s", dev.ID(), dev.Location(), dev.Address, dev.Serial)
+}
+
 func (c *SharedConnector) Connect(ctx context.Context, dev usb.DeviceInfo) (Device, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	key := fmt.Sprintf("%s/%s/%d", dev.ID(), dev.Location(), dev.Address)
+	key := usbKey(dev)
 	e := c.entries[key]
 	if e == nil {
 		d, err := c.Connector.Connect(ctx, dev)
@@ -76,6 +83,7 @@ func (c *SharedConnector) Connect(ctx context.Context, dev usb.DeviceInfo) (Devi
 		}
 		e = &sharedEntry{Device: d}
 		c.entries[key] = e
+		c.known[key] = transportMetadata(d, dev.Serial)
 	}
 	e.refs++
 	return &deviceLease{Device: e.Device, owner: c, entry: e, key: key}, nil
@@ -102,7 +110,8 @@ func (d *deviceLease) OpenTCP(ctx context.Context, port int) (io.ReadWriteCloser
 	}
 	return nil, fmt.Errorf("adb: TCP streams are unavailable")
 }
-func (d *deviceLease) Serial() string { return TransportSerial(d.Device, "") }
+func (d *deviceLease) Serial() string     { return TransportSerial(d.Device, "") }
+func (d *deviceLease) Metadata() Metadata { return transportMetadata(d.Device, "") }
 func (d *deviceLease) RebootBootloader(ctx context.Context) error {
 	if d.closed.Load() {
 		return errClosed
@@ -122,4 +131,34 @@ func (c *SharedConnector) LocateSerial(ctx context.Context, serial string, devic
 		return locator.LocateSerial(ctx, serial, devices)
 	}
 	return usb.DeviceInfo{}, ErrNoDevice
+}
+
+// Describe retains CNXN metadata after the last lease closes, until the USB device disappears
+// or its address changes. Looking up a label never creates another lease or opens a service.
+func (c *SharedConnector) Describe(ctx context.Context, devices []usb.DeviceInfo) map[string]Metadata {
+	out := map[string]Metadata{}
+	if source, ok := c.Connector.(MetadataProvider); ok {
+		out = maps.Clone(source.Describe(ctx, devices))
+	}
+	if out == nil {
+		out = map[string]Metadata{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	present := map[string]bool{}
+	for _, dev := range devices {
+		key := usbKey(dev)
+		present[key] = true
+		if m, ok := c.known[key]; ok {
+			if _, listed := out[dev.Location()]; !listed {
+				out[dev.Location()] = m
+			}
+		}
+	}
+	for key := range c.known {
+		if !present[key] {
+			delete(c.known, key)
+		}
+	}
+	return out
 }

@@ -6,7 +6,7 @@
 // it runs the same in the app window, in a browser (openxplay-flasher web) and in tests.
 
 import { t, setLang, lang, translateStatic } from "./i18n.js";
-import { deviceView, modelView, modeLabel, usbId, usbPort, deviceSummary } from "./devices.js";
+import { deviceView, modelView, modeLabel, usbId, usbPort, deviceSummary, ignoredDeviceLabel } from "./devices.js";
 import { api, el } from "./ui.js";
 import { problemText } from "./installlogic.js";
 import * as connectionView from "./connection.js";
@@ -105,7 +105,7 @@ function renderDevices() {
     const details = el("details", { class: "others" }, [
       el("summary", { "data-focus": "others" }, summary),
       el("p", {}, t("Unknown adb devices are ignored until you explicitly designate one as a UFI003 with its original firmware.")),
-      el("ul", {}, ignoredADB.map((c) => el("li", {}, [usbId(c.usb) + " · " + usbPort(c.usb),
+      el("ul", {}, ignoredADB.map((c) => el("li", {}, [ignoredDeviceLabel(c),
         c.mode === "adb" ? el("button", { type: "button", disabled: state.designationBusy,
           onclick: () => { state.designation = usbPort(c.usb); state.designationError = ""; renderDevices(); } }, t("This is a UFI003 with its original firmware")) : "",
         state.designation === usbPort(c.usb) ? el("div", { class: "designation-confirm" }, [

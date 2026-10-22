@@ -136,12 +136,12 @@ func at(bus int, path ...int) usb.DeviceInfo {
 func TestParseDevicesL(t *testing.T) {
 	got := parseDevicesL(devicesL)
 	want := []serverEntry{
-		{"0123456789", "device", "0-1.1.1", "16"},
-		{"0123456789", "device", "0-1.2", "17"},
-		{"7DJF6XLJMN6DCEKR", "device", "0-1.1.4", "12"},
-		{"R5CN30JQHZF", "unauthorized", "0-1.3", "14"},
-		{"????????????", "no permissions (missing udev rules? user is in the plugdev group); see [http://developer.android.com/tools/device.html]", "1-4", "3"},
-		{"192.168.1.20:5555", "offline", "", "9"},
+		{serial: "0123456789", state: "device", usb: "0-1.1.1", transportID: "16", metadata: Metadata{Serial: "0123456789", Product: "occam", Model: "Nexus_4", Device: "mako"}},
+		{serial: "0123456789", state: "device", usb: "0-1.2", transportID: "17", metadata: Metadata{Serial: "0123456789", Product: "occam", Model: "Nexus_4", Device: "mako"}},
+		{serial: "7DJF6XLJMN6DCEKR", state: "device", usb: "0-1.1.4", transportID: "12", metadata: Metadata{Serial: "7DJF6XLJMN6DCEKR", Product: "pond", Model: "2409BRN2CC", Device: "pond"}},
+		{serial: "R5CN30JQHZF", state: "unauthorized", usb: "0-1.3", transportID: "14", metadata: Metadata{Serial: "R5CN30JQHZF"}},
+		{serial: "????????????", state: "no permissions (missing udev rules? user is in the plugdev group); see [http://developer.android.com/tools/device.html]", usb: "1-4", transportID: "3", metadata: Metadata{Serial: "????????????"}},
+		{serial: "192.168.1.20:5555", state: "offline", transportID: "9", metadata: Metadata{Serial: "192.168.1.20:5555", Product: "x", Model: "y", Device: "z"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseDevicesL:\n got %q\nwant %q", got, want)

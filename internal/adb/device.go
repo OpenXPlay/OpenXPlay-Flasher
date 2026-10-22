@@ -31,10 +31,11 @@ type transport interface {
 
 // device implements Device with the shell and sync protocols over a transport.
 type device struct {
-	t       transport
-	serial  string
-	shellV2 bool
-	closed  atomic.Bool
+	t        transport
+	serial   string
+	metadata Metadata
+	shellV2  bool
+	closed   atomic.Bool
 }
 
 var errClosed = errors.New("adb: the connection is closed")

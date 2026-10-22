@@ -40,6 +40,7 @@ func (s *Service) SetFastboot(open base.OpenFastboot, supported bool) {
 func (s *Service) scanDevices(ctx context.Context, probe bool) device.Snapshot {
 	snap := s.addSSH(s.detector.Scan(ctx))
 	snap.Candidates = slices.Clone(snap.Candidates)
+	s.describeADB(ctx, &snap)
 	s.mu.Lock()
 	open, supported := s.fastbootOpen, s.fastbootSupported
 	for i := range snap.Candidates {
@@ -87,6 +88,34 @@ func (s *Service) scanDevices(ctx context.Context, probe bool) device.Snapshot {
 		cancel()
 	}
 	return snap
+}
+
+func (s *Service) describeADB(ctx context.Context, snap *device.Snapshot) {
+	s.mu.Lock()
+	connector := s.adb
+	s.mu.Unlock()
+	var devices []usb.DeviceInfo
+	for _, c := range snap.Candidates {
+		if c.Mode == device.ModeADB {
+			devices = append(devices, c.USB)
+		}
+	}
+	var metadata map[string]adb.Metadata
+	if source, ok := connector.(adb.MetadataProvider); ok {
+		readCtx, cancel := context.WithTimeout(ctx, time.Second)
+		metadata = source.Describe(readCtx, devices)
+		cancel()
+	}
+	for i := range snap.Candidates {
+		c := &snap.Candidates[i]
+		if c.Mode == device.ModeADB && !c.Supported() {
+			m := metadata[c.USB.Location()]
+			c.ADBName, c.ADBSerial = m.Name(), m.Serial
+			if c.ADBSerial == "" {
+				c.ADBSerial = c.USB.Serial
+			}
+		}
+	}
 }
 
 // DesignateStock is the only entry point that opens an ignored adb device. A failed check

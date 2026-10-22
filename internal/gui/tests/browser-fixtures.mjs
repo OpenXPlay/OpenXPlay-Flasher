@@ -81,6 +81,14 @@ export function fixture(scene) {
   const devices = { candidates: [candidate(mode)] };
   if (mode === "stock") { state.target.device.usb = { ...unknown.usb }; devices.candidates = [{ ...unknown, mode: "stock", profiles: ["ufi003"], serialno: serial }]; state.installed.layers = {}; }
   if (scene === "connect-designation") { devices.candidates = [unknown]; delete state.target; delete state.identity; delete state.installed; state.choices=[]; state.layers=[]; }
+  if (scene === "connect-ignored") {
+    devices.candidates = [
+      { mode: "adb", profiles: [], adbName: "msm8916_32_512", adbSerial: "4336bd41", usb: { vendorId: 0x05c6, productId: 0x90b4, bus: 0, address: 8, path: [1, 1, 1] } },
+      { mode: "adb", profiles: [], adbName: "Pixel_8", adbSerial: "phone-example", usb: { vendorId: 0x18d1, productId: 0x4ee7, bus: 0, address: 9, path: [2] } },
+      { mode: "adb", profiles: [], usb: { vendorId: 0x05c6, productId: 0x9091, bus: 0, address: 10, path: [3] } },
+    ];
+    delete state.target; delete state.identity; delete state.installed; state.choices=[]; state.layers=[];
+  }
   if (scene === "connect-fastboot") { state.resume = { serial, finished: false, capturedSet: "20261021T080000Z" }; state.installed.layers = {}; }
   if (scene === "critical" || scene.startsWith("system-progress") || scene.startsWith("done-")) {
     const success = scene === "done-success" || scene === "done-identity";

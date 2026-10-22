@@ -5,7 +5,6 @@
 package adb
 
 import (
-	"bytes"
 	"context"
 	"crypto/rsa"
 	"encoding/binary"
@@ -96,13 +95,7 @@ func parseHeader(h []byte) (message, uint32, uint32, error) {
 // parseBanner returns the features in a device's CNXN banner,
 // "device::ro.product.name=...;...;features=shell_v2,cmd".
 func parseBanner(banner []byte) []string {
-	_, props, _ := strings.Cut(string(bytes.TrimRight(banner, "\x00")), "::")
-	for _, p := range strings.Split(props, ";") {
-		if v, ok := strings.CutPrefix(p, "features="); ok {
-			return splitList(v)
-		}
-	}
-	return nil
+	return splitList(bannerProperties(banner)["features"])
 }
 
 // USBConnector talks to adbd directly over USB, for when no adb server holds the device. Builds
@@ -140,9 +133,12 @@ func (c USBConnector) Connect(ctx context.Context, dev usb.DeviceInfo) (Device, 
 	}
 	t.start()
 	d := newDevice(t, features)
+	d.metadata = t.metadata
 	d.serial = dev.Serial
 	if reader, ok := bulk.(interface{ SerialNumber() (string, error) }); ok {
-		d.serial, _ = reader.SerialNumber()
+		if serial, err := reader.SerialNumber(); err == nil && serial != "" {
+			d.serial = serial
+		}
 	}
 	return d, nil
 }
@@ -166,9 +162,10 @@ func (c USBConnector) loadKey() (*rsa.PrivateKey, error) {
 // and hands them to their streams; writers take turns on the OUT endpoint, one whole message
 // each.
 type usbTransport struct {
-	bulk   usb.Bulk
-	packet int
-	hdr    []byte // the reader's header buffer
+	bulk     usb.Bulk
+	packet   int
+	hdr      []byte   // the reader's header buffer
+	metadata Metadata // immutable after the handshake
 
 	wmu        sync.Mutex
 	checksum   bool // send data checksums: the device is older than versionSkipChecksum
@@ -222,6 +219,9 @@ func (t *usbTransport) handshake(ctx context.Context, loadKey func() (*rsa.Priva
 		}
 		switch m.command {
 		case cmdCNXN:
+			props := bannerProperties(m.data)
+			t.metadata = Metadata{Serial: props["ro.serialno"], Product: props["ro.product.name"],
+				Model: props["ro.product.model"], Device: props["ro.product.device"]}
 			t.checksum = m.arg0 < versionSkipChecksum
 			if m.arg1 != 0 {
 				t.maxData = min(int(m.arg1), hostMaxData)

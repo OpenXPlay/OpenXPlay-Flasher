@@ -21,6 +21,10 @@ func TestParseSentinel(t *testing.T) {
 		{"\n__OXPF_EXIT__127\n", "", 127},
 		// A terminal that still turns \n into \r\n.
 		{"a\r\nb\r\n\r\n__OXPF_EXIT__3\r\n", "a\r\nb\r\n", 3},
+		// Exact stock UFI003 getprop output, plus failure and no trailing command newline.
+		{"msm8916_32_512\r\n\r\n__OXPF_EXIT__0\r\n", "msm8916_32_512\r\n", 0},
+		{"getprop: failed\r\n\r\n__OXPF_EXIT__127\r\n", "getprop: failed\r\n", 127},
+		{"msm8916_32_512\r\n__OXPF_EXIT__3\r\n", "msm8916_32_512", 3},
 		// Only the last status counts.
 		{"\n__OXPF_EXIT__1\nmore\n\n__OXPF_EXIT__2\n", "\n__OXPF_EXIT__1\nmore\n", 2},
 		{"\n__OXPF_EXIT__4", "", 4},
@@ -34,6 +38,34 @@ func TestParseSentinel(t *testing.T) {
 	for _, bad := range []string{"no status\n", "\n__OXPF_EXIT__\n", "\n__OXPF_EXIT__x1\r\n"} {
 		if _, err := parseSentinel([]byte(bad)); err == nil {
 			t.Errorf("parseSentinel(%q) succeeded", bad)
+		}
+	}
+}
+
+func TestSentinelCommandWithoutUtilities(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	for _, tc := range []struct {
+		cmd    string
+		stdout string
+		code   int
+	}{
+		{"echo msm8916_32_512", "msm8916_32_512\n", 0},
+		{"echo failed >&2; exit 127", "failed\n", 127},
+		{"exit 3", "", 3},
+	} {
+		// No external utilities, and no printf builtin as on the measured stock shell.
+		c := exec.Command(sh, "-c", "printf() { return 127; }; "+sentinelCommand(tc.cmd))
+		c.Env = []string{"PATH=" + t.TempDir()}
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%q: %v (%q)", tc.cmd, err, out)
+		}
+		r, err := parseSentinel(out)
+		if err != nil || string(r.Stdout) != tc.stdout || r.ExitCode != tc.code {
+			t.Errorf("%q: %q %d %v", tc.cmd, r.Stdout, r.ExitCode, err)
 		}
 	}
 }

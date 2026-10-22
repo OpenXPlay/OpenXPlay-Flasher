@@ -63,11 +63,13 @@ func (s ServerConnector) Connect(ctx context.Context, dev usb.DeviceInfo) (Devic
 	}
 	d := newDevice(t, splitList(list))
 	d.serial = e.serial
+	d.metadata = e.metadata
 	return d, nil
 }
 
 type serverEntry struct {
 	serial, state, usb, transportID string
+	metadata                        Metadata
 }
 
 // devices lists the server's devices.
@@ -88,7 +90,7 @@ func parseDevicesL(list string) []serverEntry {
 		if len(f) < 2 {
 			continue
 		}
-		e := serverEntry{serial: f[0]}
+		e := serverEntry{serial: f[0], metadata: Metadata{Serial: f[0]}}
 		var state []string
 		inState := true
 		for _, tok := range f[1:] {
@@ -98,7 +100,13 @@ func parseDevicesL(list string) []serverEntry {
 				e.usb = value
 			case ok && key == "transport_id":
 				e.transportID = value
-			case ok && (key == "product" || key == "model" || key == "device" || key == "features"):
+			case ok && key == "product":
+				e.metadata.Product = value
+			case ok && key == "model":
+				e.metadata.Model = value
+			case ok && key == "device":
+				e.metadata.Device = value
+			case ok && key == "features":
 			default:
 				if inState {
 					state = append(state, tok)

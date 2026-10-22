@@ -4,7 +4,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deviceView, modelView, modeLabel, otherModeLabel, text, usbId, usbPort } from "../assets/devices.js";
+import { deviceView, modelView, modeLabel, otherModeLabel, text, usbId, usbPort, ignoredDeviceLabel } from "../assets/devices.js";
+import { setLang } from "../assets/i18n.js";
 
 const dongle = { mode: "adb", profiles: ["ufi003"], usb: { vendorId: 0x18d1, productId: 0xd001, bus: 0, path: [1, 1, 1] } };
 const phone = { mode: "adb", profiles: [], usb: { vendorId: 0x2717, productId: 0xff08, bus: 0, path: [1, 1, 4] } };
@@ -44,6 +45,18 @@ test("IDs and ports are formatted like lsusb", () => {
   assert.equal(usbId(dongle.usb), "18d1:d001");
   assert.equal(usbPort(dongle.usb), "0-1.1.1");
   assert.equal(usbPort(edl.usb), "1");
+});
+
+for (const language of ["en", "zh-CN"]) test("ignored adb labels use available metadata in " + language, () => {
+  setLang(language);
+  const stock = { mode: "adb", profiles: [], usb: { vendorId: 0x05c6, productId: 0x90b4, bus: 0, path: [1, 1, 1] } };
+  const known = { ...stock, adbName: "msm8916_32_512", adbSerial: "4336bd41" };
+  assert.equal(ignoredDeviceLabel(known), "msm8916_32_512 · 4336bd41 · 0-1.1.1");
+  assert.equal(ignoredDeviceLabel({ ...stock, adbName: "msm8916_32_512" }), "msm8916_32_512 · 0-1.1.1");
+  assert.equal(ignoredDeviceLabel({ ...stock, adbSerial: "4336bd41" }), "05c6:90b4 · 4336bd41 · 0-1.1.1");
+  assert.equal(ignoredDeviceLabel({ ...stock, usb: { ...stock.usb, serial: "usb-serial" } }), "05c6:90b4 · usb-serial · 0-1.1.1");
+  assert.equal(ignoredDeviceLabel(stock), "05c6:90b4 · 0-1.1.1");
+  assert.equal(deviceView({ candidates: [known] }).status, "none");
 });
 
 test("one matching profile names the model and its layers", () => {

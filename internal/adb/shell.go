@@ -73,12 +73,14 @@ func runShellV2(rw io.ReadWriter) (Result, error) {
 
 // The legacy shell service ("shell:") reports no exit status and, on old adbd, runs the command on
 // a terminal that turns \n into \r\n and merges stderr into stdout. sentinelCommand turns that
-// translation off, runs cmd in a subshell with stdin from /dev/null (so exit and reads of stdin
-// end it) and prints its status on a line of its own; parseSentinel takes that line off again.
+// translation off where stty exists (stock Android 4.4 has none), runs cmd in a subshell with
+// stdin from /dev/null (so exit and reads of stdin end it), saves its status and prints it on a
+// line of its own with echo only (Android 4.4's shell has no printf). parseSentinel removes that
+// line whether or not the terminal translates newlines.
 const sentinel = "__OXPF_EXIT__"
 
 func sentinelCommand(cmd string) string {
-	return "stty -onlcr 2>/dev/null; (" + cmd + "\n) </dev/null; printf '\\n" + sentinel + "%d\\n' $?"
+	return "stty -onlcr 2>/dev/null; (" + cmd + "\n) </dev/null; rc=$?; echo; echo " + sentinel + "$rc"
 }
 
 func parseSentinel(out []byte) (Result, error) {
