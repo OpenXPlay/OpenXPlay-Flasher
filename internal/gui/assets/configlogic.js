@@ -23,6 +23,7 @@ export function checkContent(format, text) {
 }
 
 const ERROR_TEXT = {
+  "privacy": "This file holds private data. Open it under Privacy.",
   "no-adb": "This build cannot reach devices over USB.",
   "no-device": "Connect a supported device that runs Linux; its configuration files appear here.",
   "several-devices": "Several supported devices are connected. Connect only one.",
@@ -47,4 +48,13 @@ export function errorText(t, err) {
   if (known) return t(known);
   if (err && err.code === "invalid") return t("The content is not valid: {msg}", { msg: err.message });
   return t("The device reported an error: {msg}", { msg: (err && err.message) || "" });
+}
+
+// This matches the native import refusal before any credential JSON reaches the raw editor.
+export function isPrivateImport(text) {
+  try {
+    const value = JSON.parse(text);
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      && (Object.hasOwn(value, "token") || Object.hasOwn(value, "agreeLetsEncryptTerms"));
+  } catch { return false; }
 }

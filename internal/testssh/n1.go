@@ -20,6 +20,7 @@ type N1 struct {
 	model, mac string
 	Password   string
 	Commands   []string
+	config     func(string, io.Reader, io.Writer, io.Writer) int
 }
 
 func NewN1(t testing.TB, password string) *N1 {
@@ -48,6 +49,9 @@ func (n *N1) handle(cmd string, in io.Reader, out, stderr io.Writer) int {
 		return 0
 	}
 	command := Unwrap(cmd)
+	if n.config != nil && (strings.Contains(command, "sh -c ") || strings.Contains(command, "exec 3<") || strings.Contains(command, "mktemp")) {
+		return n.config(command, in, out, stderr)
+	}
 	switch {
 	case command == "cat /sys/class/net/eth0/address":
 		fmt.Fprintln(out, n.mac)
@@ -60,7 +64,12 @@ func (n *N1) handle(cmd string, in io.Reader, out, stderr io.Writer) int {
 	case strings.Contains(command, "identity.pk8"):
 		fmt.Fprint(out, "0\n0\n")
 	case strings.Contains(command, "readlink -f"):
-		fmt.Fprint(out, "file\n/var/lib/openxplay/settings.json\n600\nroot:root\n2\n")
+		path := command[strings.LastIndex(command, " '")+2 : len(command)-1]
+		if path == "/var/lib/openxplay/settings.json" {
+			fmt.Fprint(out, "file\n/var/lib/openxplay/settings.json\n600\nroot:root\n2\n")
+		} else {
+			fmt.Fprintf(out, "missing\n%s\n", path)
+		}
 	case strings.Contains(command, "exec 3<"):
 		fmt.Fprint(out, "{}")
 	default:

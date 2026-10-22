@@ -43,6 +43,8 @@ restart) if grep -q BROKEN "$OXPF_WATCHED" 2>/dev/null; then echo failed > "$OXP
 is-active) s=$(head -n 1 "$OXPF_STATE" 2>/dev/null || echo inactive); [ "$2" = --quiet ] || echo "$s"; [ "$s" = active ] ;;
 show) if [ "$(head -n 1 "$OXPF_STATE")" = active ]; then echo 0; else echo 3; fi ;;
 esac`,
+		// Production runs as root; local tests verify the requested owner without changing this host.
+		"chown":      "#!/bin/sh\n[ \"$1\" = root:root ]\n",
 		"journalctl": "#!/bin/sh\necho 'relay: settings.json: invalid value'\n",
 		// GNU stat -c '%a %U:%G %s' on systems whose stat is BSD's.
 		"stat": `#!/bin/sh
@@ -129,7 +131,7 @@ func TestValidate(t *testing.T) {
 		t.Fatal("valid content refused")
 	}
 	for _, c := range []struct{ format, content string }{
-		{"json", `{"a":`}, {"json", `[1]`}, {"json", `{} {}`}, {"text", "a\x00b"}, {"text", "\xff"}, {"yaml", "a: 1"},
+		{"json", `{"a":`}, {"json", `[1]`}, {"json", `{} {}`}, {"text", "a\x00b"}, {"text", "\xff"}, {"yaml", "a: 1"}, {"public-name", `{"version":1}`},
 	} {
 		if Validate(c.format, c.content) == nil {
 			t.Errorf("Validate(%q, %q) accepted", c.format, c.content)

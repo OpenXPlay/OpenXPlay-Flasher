@@ -19,6 +19,7 @@ export async function api(path, body, method) {
     err.code = (data && data.code) || "http";
     err.detail = (data && (data.detail || data.error)) || "";
     err.host = data?.host; err.fingerprint = data?.fingerprint; err.keyType = data?.keyType;
+    err.fields = (data && data.errors) || {};
     throw err;
   }
   return data;

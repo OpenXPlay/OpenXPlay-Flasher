@@ -7,6 +7,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/config"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/device"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/gui"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/power"
@@ -71,7 +73,11 @@ Commands:
   config-get PATH  print a configuration file of the connected device
   config-put PATH FILE
                    write FILE to PATH on the device (backup first; the relay restarts for
-                   files its profile lists, or with -restart)
+                   files its profile marks for restart, or with -restart)
+                   Privacy: config-get returns redacted status; config-put takes a JSON patch:
+                   enabled, provider, name, token, agreeLetsEncryptTerms. Empty token keeps it;
+                   omitted fields keep saved values. Privacy writes never restart the relay.
+                   隐私配置仅读取脱敏状态；写入使用上述字段的 JSON 补丁，空 Token 保留原值，省略字段不变，不重启中继。
   web              serve the app's page to a browser on this computer, for UI work
 
 Flags:
@@ -213,6 +219,17 @@ func runConfig(svc *app.Service, cmd string, args []string, restart bool, stdout
 	for snap := svc.Devices(); snap.Candidates == nil && snap.Error == "" && ctx.Err() == nil; snap = svc.Devices() {
 		time.Sleep(50 * time.Millisecond)
 	}
+	// Only an exact profile path selects typed privacy operations. Aliases still pass
+	// through the service's raw gate and cannot become a raw read or write.
+	target, targetErr := svc.ConfigTarget()
+	if targetErr == nil {
+		clean, _ := config.CheckPath(args[0])
+		for _, entry := range target.Files {
+			if entry.Category == "privacy" && entry.Path == clean {
+				return runPrivateConfig(ctx, svc, entry.ID, cmd, args, stdout, stderr)
+			}
+		}
+	}
 	if cmd == "config-get" {
 		f, err := svc.ConfigRead(ctx, args[0])
 		if err != nil {
@@ -298,4 +315,40 @@ func writeJSON(stdout, stderr io.Writer, v any) int {
 		return 1
 	}
 	return 0
+}
+
+// runPrivateConfig accepts a typed JSON patch; consent is changed only when explicitly supplied.
+func runPrivateConfig(ctx context.Context, svc *app.Service, id, cmd string, args []string, stdout, stderr io.Writer) int {
+	action := "read"
+	var update config.PublicNameUpdate
+	fail := func(err error) int { fmt.Fprintln(stderr, "openxplay-flasher:", err); return 1 }
+	if cmd == "config-put" {
+		action = "write"
+		f, err := os.Open(args[1])
+		if err != nil {
+			return fail(config.ErrPrivateOperation)
+		}
+		defer f.Close()
+		data, err := io.ReadAll(io.LimitReader(f, config.PublicNameMaxSize+1))
+		if err != nil || len(data) > config.PublicNameMaxSize {
+			return fail(config.ErrPrivateOperation)
+		}
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.DisallowUnknownFields()
+		if trimmed := bytes.TrimSpace(data); len(trimmed) == 0 || trimmed[0] != '{' {
+			return fail(config.ErrPrivateOperation)
+		}
+		if err = dec.Decode(&update); err != nil {
+			return fail(config.ErrPrivateOperation)
+		}
+		var extra any
+		if err = dec.Decode(&extra); err != io.EOF {
+			return fail(config.ErrPrivateOperation)
+		}
+	}
+	view, _, err := svc.ConfigPrivacy(ctx, id, action, update, nil, "")
+	if err != nil {
+		return fail(err)
+	}
+	return writeJSON(stdout, stderr, view)
 }

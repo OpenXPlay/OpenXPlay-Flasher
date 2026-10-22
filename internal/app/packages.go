@@ -14,6 +14,7 @@ import (
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/base"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/catalog"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/privatefile"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/version"
@@ -75,7 +76,11 @@ func (s *Service) ConfigureDefaultStorage() error {
 	if err != nil {
 		return err
 	}
-	s.ConfigureStorage(filepath.Join(data, "OpenXPlay Flasher"), filepath.Join(cache, "OpenXPlay Flasher"), backups, nil)
+	data = filepath.Join(data, "OpenXPlay Flasher")
+	if err := privatefile.Dir(data); err != nil {
+		return err
+	}
+	s.ConfigureStorage(data, filepath.Join(cache, "OpenXPlay Flasher"), backups, nil)
 	return nil
 }
 

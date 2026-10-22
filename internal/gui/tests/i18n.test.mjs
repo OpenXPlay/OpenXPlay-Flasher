@@ -10,13 +10,13 @@ import { ZH, t, setLang } from "../assets/i18n.js";
 
 const read = (name) => readFileSync(new URL("../assets/" + name, import.meta.url), "utf8");
 const html = read("index.html");
-const scripts = ["connection.js", "app.js", "devices.js", "config.js", "configlogic.js", "install.js", "installlogic.js", "settings.js", "settingslogic.js"].map(read).join("\n");
+const scripts = ["connection.js", "app.js", "devices.js", "config.js", "configlogic.js", "privacy.js", "install.js", "installlogic.js", "settings.js", "settingslogic.js"].map(read).join("\n");
 const nativeText = readFileSync(new URL("../text.go", import.meta.url), "utf8");
 // Native menus keep their own strings; the new labels must match the page's translations.
 const nativeEnglish = nativeText.slice(nativeText.lastIndexOf("return menuText{"));
 
 test("every browser module parses as an ES module", () => {
-  for (const file of ["connection.js", "app.js", "devices.js", "install.js", "installlogic.js", "i18n.js", "ui.js", "config.js", "configlogic.js", "settings.js", "settingslogic.js"]) {
+  for (const file of ["connection.js", "app.js", "devices.js", "install.js", "installlogic.js", "i18n.js", "ui.js", "config.js", "configlogic.js", "privacy.js", "settings.js", "settingslogic.js"]) {
     const result = spawnSync(process.execPath, ["--input-type=module", "--check"], { input: read(file), encoding: "utf8" });
     assert.equal(result.status, 0, file + ": " + result.stderr);
   }

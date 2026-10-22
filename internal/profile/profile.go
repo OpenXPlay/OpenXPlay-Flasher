@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 // Mode is a device transport or an explicitly designated stock adb state.
@@ -99,10 +100,13 @@ type Layer struct {
 
 // ConfigFile is a configuration file on the device that the configuration window offers.
 type ConfigFile struct {
-	ID   string `json:"id"`
-	Path string `json:"path"`
-	Name Text   `json:"name"`
-	// Format is "json" (checked before a write) or "text".
+	ID       string `json:"id"`
+	Category string `json:"category"`
+	// PrivatePaths lists extra private roots or filename prefixes ending in *.
+	PrivatePaths []string `json:"privatePaths,omitempty"`
+	Path         string   `json:"path"`
+	Name         Text     `json:"name"`
+	// Format is "json", "text" or the typed privacy format "public-name".
 	Format string `json:"format"`
 	// RestartService: the profile's service reads this file at start, so a write restarts it.
 	RestartService bool `json:"restartService"`
@@ -283,7 +287,19 @@ func (p Profile) validateConfig() error {
 		if !path.IsAbs(c.Path) || path.Clean(c.Path) != c.Path {
 			return fmt.Errorf("profile %s: config %s: path %q must be absolute and clean", p.ID, c.ID, c.Path)
 		}
-		if c.Format != "json" && c.Format != "text" {
+		if c.Category != "system" && c.Category != "user" && c.Category != "privacy" {
+			return fmt.Errorf("profile %s: config %s: unknown category %q", p.ID, c.ID, c.Category)
+		}
+		if (c.Category == "privacy") != (c.Format == "public-name") {
+			return fmt.Errorf("profile %s: config %s: privacy requires a typed public-name form", p.ID, c.ID)
+		}
+		for _, root := range c.PrivatePaths {
+			clean := strings.TrimSuffix(root, "*")
+			if c.Category != "privacy" || !path.IsAbs(clean) || path.Clean(clean) != clean || strings.ContainsAny(clean, "*?[]\x00\n\r") {
+				return fmt.Errorf("profile %s: invalid private path", p.ID)
+			}
+		}
+		if c.Format != "json" && c.Format != "text" && c.Format != "public-name" {
 			return fmt.Errorf("profile %s: config %s: unknown format %q", p.ID, c.ID, c.Format)
 		}
 		if c.RestartService && p.Service == "" {

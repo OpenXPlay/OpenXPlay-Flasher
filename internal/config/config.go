@@ -11,6 +11,7 @@ package config
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +33,7 @@ const MaxSize = 1 << 20
 var protected = []string{"/var/lib/openxplay/mfi", "/proc", "/sys", "/dev", "/boot"}
 
 var (
+	ErrPrivacy    = errors.New("This file holds private data. Open it under Privacy.")
 	ErrProtected  = errors.New("this file is protected and cannot be opened")
 	ErrNotRegular = errors.New("not a regular file")
 	ErrTooLarge   = errors.New("the file is larger than 1 MiB")
@@ -148,8 +150,11 @@ type probe struct {
 }
 
 const probeScript = `p=$1
-r=$(readlink -f -- "$p" 2>/dev/null) || r=$p
-[ -n "$r" ] || r=$p
+r=$(readlink -f -- "$p" 2>/dev/null) || r=
+if [ -z "$r" ]; then
+ parent=$(readlink -f -- "$(dirname "$p")" 2>/dev/null) || parent=
+ if [ -n "$parent" ]; then r=$parent/$(basename "$p"); else r=$p; fi
+fi
 if [ -f "$r" ]; then
 	set -- $(stat -c '%a %U:%G %s' -- "$r")
 	printf 'file\n%s\n%s\n%s\n%s\n' "$r" "$1" "$2" "$3"
@@ -169,9 +174,11 @@ func (e *Editor) probe(ctx context.Context, p string) (probe, error) {
 		return probe{}, fmt.Errorf("unexpected answer from the device: %q", out)
 	}
 	pr := probe{kind: lines[0], resolved: lines[1]}
-	if _, err := CheckPath(pr.resolved); err != nil {
+	clean, err := CheckPath(pr.resolved)
+	if err != nil {
 		return probe{}, err
 	}
+	pr.resolved = clean
 	if pr.kind == "file" {
 		if len(lines) < 5 {
 			return probe{}, fmt.Errorf("unexpected answer from the device: %q", out)
@@ -220,7 +227,7 @@ func (e *Editor) Read(ctx context.Context, p string) (File, error) {
 // umask matters: adbd's shell may run with umask 0, which would leave new folders world-writable.
 const replaceScript = `set -eu
 umask 077
-target=$1 staged=$2 backups=$3 keep=$4 newmode=$5 stamp=$6
+target=$1 staged=$2 backups=$3 keep=$4 newmode=$5 stamp=$6 private=$7
 mkdir -p "$backups"
 chmod 700 "$backups" "$(dirname "$backups")" "$(dirname "$(dirname "$backups")")"
 backup=
@@ -228,6 +235,7 @@ if [ -f "$target" ]; then
 	backup=$stamp-$$
 	cp -p "$target" "$backups/$backup"
 	cp -p "$target" "$target.oxpf-tmp"
+	if [ "$private" = true ]; then chmod 600 "$target.oxpf-tmp"; fi
 	cat "$staged" > "$target.oxpf-tmp"
 elif [ -d "$(dirname "$target")" ]; then
 	cp "$staged" "$target.oxpf-tmp"
@@ -236,6 +244,10 @@ else
 	rm -f "$staged"
 	echo "the folder $(dirname "$target") does not exist" >&2
 	exit 3
+fi
+if [ "$private" = true ]; then
+	chmod 600 "$target.oxpf-tmp"
+	chown root:root "$target.oxpf-tmp"
 fi
 rm -f "$staged"
 mv -f "$target.oxpf-tmp" "$target"
@@ -279,11 +291,20 @@ const journalScript = `journalctl -u "$1" -n 40 --no-pager -o cat 2>&1 | tail -c
 
 // Write replaces a file, restarts the service when asked and rolls back if it does not stay up.
 func (e *Editor) Write(ctx context.Context, req WriteRequest) (WriteResult, error) {
-	p, err := CheckPath(req.Path)
+	_, err := CheckPath(req.Path)
 	if err != nil {
 		return WriteResult{}, err
 	}
 	if err := Validate(req.Format, req.Content); err != nil {
+		return WriteResult{}, err
+	}
+	return e.writeValidated(ctx, req)
+}
+
+// writeValidated is reached only after the caller has validated the complete upload.
+func (e *Editor) writeValidated(ctx context.Context, req WriteRequest) (WriteResult, error) {
+	p, err := CheckPath(req.Path)
+	if err != nil {
 		return WriteResult{}, err
 	}
 	pr, err := e.probe(ctx, p)
@@ -294,6 +315,9 @@ func (e *Editor) Write(ctx context.Context, req WriteRequest) (WriteResult, erro
 		return WriteResult{}, ErrNotRegular
 	}
 	target := pr.resolved
+	if err := e.checkBackupDir(ctx, target, true); err != nil {
+		return WriteResult{}, err
+	}
 
 	if _, err := e.run(ctx, `umask 077; mkdir -p "$1" && chmod 700 "$1" "$(dirname "$1")"`, e.StagingDir); err != nil {
 		return WriteResult{}, fmt.Errorf("prepare upload: %w", err)
@@ -308,7 +332,7 @@ func (e *Editor) Write(ctx context.Context, req WriteRequest) (WriteResult, erro
 	}
 	// Backups are named after this computer's clock: the device may have no real-time clock.
 	stamp := time.Now().UTC().Format("20060102-150405.000000000")
-	out, err := e.run(ctx, replaceScript, target, staged, e.backupDir(target), strconv.Itoa(e.Keep), newMode, stamp)
+	out, err := e.run(ctx, replaceScript, target, staged, e.backupDir(target), strconv.Itoa(e.Keep), newMode, stamp, strconv.FormatBool(req.Format == "public-name"))
 	if err != nil {
 		_, _ = e.run(ctx, `rm -f "$1"`, staged)
 		return WriteResult{}, fmt.Errorf("replace: %w", err)
@@ -354,13 +378,17 @@ func (e *Editor) Backups(ctx context.Context, p string) ([]Backup, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := e.run(ctx, `[ -d "$1" ] && ls -1 "$1" || true`, e.backupDir(pr.resolved))
+	if err := e.checkBackupDir(ctx, pr.resolved, false); err != nil {
+		return nil, err
+	}
+	out, err := e.run(ctx, `for dir do [ ! -d "$dir" ] || ls -1 "$dir"; done`, e.backupDir(pr.resolved), e.legacyBackupDir(pr.resolved))
 	if err != nil {
 		return nil, err
 	}
 	var list []Backup
+	seen := map[string]bool{}
 	for _, name := range strings.Fields(out) {
-		if len(name) < 15 {
+		if !validBackupID(name) || seen[name] {
 			continue
 		}
 		// Names are the computer's UTC time of the write, then the device shell's pid.
@@ -368,6 +396,7 @@ func (e *Editor) Backups(ctx context.Context, p string) ([]Backup, error) {
 		if err != nil {
 			continue
 		}
+		seen[name] = true
 		list = append(list, Backup{ID: name, Time: t})
 	}
 	slices.SortFunc(list, func(a, b Backup) int { return strings.Compare(b.ID, a.ID) })
@@ -380,14 +409,14 @@ func (e *Editor) Restore(ctx context.Context, p, id, service string) (WriteResul
 	if err != nil {
 		return WriteResult{}, err
 	}
-	if id == "" || strings.ContainsAny(id, "/\x00") || id == "." || id == ".." {
+	if !validBackupID(id) {
 		return WriteResult{}, errors.New("unknown backup")
 	}
 	pr, err := e.probe(ctx, p)
 	if err != nil {
 		return WriteResult{}, err
 	}
-	data, err := e.Dev.Pull(ctx, e.backupDir(pr.resolved)+"/"+id, MaxSize)
+	data, err := e.readBackup(ctx, pr.resolved, id, MaxSize)
 	if err != nil {
 		return WriteResult{}, fmt.Errorf("read backup: %w", err)
 	}
@@ -402,9 +431,66 @@ func (e *Editor) restart(ctx context.Context, service string) (bool, error) {
 	return lastLine(out) == "healthy", nil
 }
 
-// backupDir names a file's backup directory after its path: /etc/x.json -> etc%x.json.
+// backupDir bounds each directory name independently of the target path length.
 func (e *Editor) backupDir(target string) string {
+	return fmt.Sprintf("%s/v2/%x", e.BackupRoot, sha256.Sum256([]byte(target)))
+}
+func (e *Editor) legacyBackupDir(target string) string {
 	return e.BackupRoot + "/" + strings.ReplaceAll(strings.TrimPrefix(target, "/"), "/", "%")
+}
+
+// checkBackupDir binds each digest directory to its original resolved path before any use.
+// Legacy directories retain their compatibility path; raw-mode collision guards apply to them.
+func (e *Editor) checkBackupDir(ctx context.Context, target string, create bool) error {
+	_, err := e.run(ctx, backupIdentityScript, e.backupDir(target), target, strconv.FormatBool(create))
+	return err
+}
+
+const backupIdentityScript = `set -eu
+umask 077
+dir=$1 target=$2 create=$3
+if [ "$create" = true ]; then
+ mkdir -p "$dir"
+ chmod 700 "$dir" "$(dirname "$dir")" "$(dirname "$(dirname "$dir")")"
+ if [ ! -e "$dir/.path" ] && [ ! -L "$dir/.path" ]; then
+  [ -z "$(ls -A "$dir")" ] || { echo 'backup path identity is missing' >&2; exit 3; }
+  printf '%s' "$target" > "$dir/.path"
+  chmod 600 "$dir/.path"
+ fi
+fi
+if [ -d "$dir" ]; then
+ [ ! -L "$dir/.path" ] && [ -f "$dir/.path" ] && [ "$(cat "$dir/.path")" = "$target" ] || {
+  echo 'backup path identity does not match' >&2
+  exit 3
+ }
+fi`
+
+// readBackup prefers the new namespace and retains access to backups already on the device.
+func (e *Editor) readBackup(ctx context.Context, target, id string, max int64) ([]byte, error) {
+	if !validBackupID(id) {
+		return nil, errors.New("unknown backup")
+	}
+	if err := e.checkBackupDir(ctx, target, false); err != nil {
+		return nil, err
+	}
+	for _, dir := range []string{e.backupDir(target), e.legacyBackupDir(target)} {
+		p := dir + "/" + id
+		pr, err := e.probe(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		if pr.kind == "missing" {
+			continue
+		}
+		if pr.kind != "file" {
+			return nil, ErrNotRegular
+		}
+		if pr.size > max {
+			return nil, ErrTooLarge
+		}
+		return e.Dev.Pull(ctx, pr.resolved, max)
+	}
+	return nil, errors.New("unknown backup")
 }
 
 // run executes a script with positional arguments; a non-zero exit is an error carrying stderr.
@@ -444,4 +530,83 @@ func lastLine(s string) string {
 		return s[i+1:]
 	}
 	return s
+}
+
+// validBackupID accepts only backup names generated by replaceScript.
+func validBackupID(id string) bool {
+	// Accept legacy second-resolution names and dev's nanosecond names.
+	if len(id) > 25 && id[15] == '.' {
+		for _, c := range id[16:25] {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+		id = id[:15] + id[25:]
+	}
+	if len(id) < 17 || id[8] != '-' || id[15] != '-' {
+		return false
+	}
+	for i, c := range id {
+		if i == 8 || i == 15 {
+			continue
+		}
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// CheckRawPath refuses private paths, their symlink aliases, and all flasher storage.
+// Private operations call the editor directly instead of going through this raw-mode gate.
+func (e *Editor) CheckRawPath(ctx context.Context, p string, private []string) error {
+	p, err := CheckPath(p)
+	if err != nil {
+		return err
+	}
+	roots := append([]string{e.BackupRoot, e.StagingDir}, private...)
+	matches := func(candidate, pattern string) bool {
+		// A trailing * is a profile-declared filename prefix; directory roots include descendants.
+		if strings.HasSuffix(pattern, "*") {
+			return strings.HasPrefix(candidate, strings.TrimSuffix(pattern, "*"))
+		}
+		return candidate == pattern || strings.HasPrefix(candidate, pattern+"/")
+	}
+	blocked := func(candidate, root string) bool {
+		// Legacy backup encoding collapsed slash and percent. Block every such alias before allowing
+		// listing/restoring a legacy backup, even though new backups cannot collide.
+		return matches(candidate, root) || matches(path.Clean(strings.ReplaceAll(candidate, "%", "/")), path.Clean(strings.ReplaceAll(root, "%", "/"))) || e.backupDir(candidate) == e.backupDir(root) || e.legacyBackupDir(candidate) == e.legacyBackupDir(root)
+	}
+	for _, root := range roots {
+		if blocked(p, root) || (!strings.HasSuffix(root, "*") && blocked(p, root+".oxpf-tmp")) {
+			return ErrPrivacy
+		}
+	}
+	pr, err := e.probe(ctx, p)
+	if err != nil {
+		return err
+	}
+	for _, root := range roots {
+		if blocked(pr.resolved, root) || (!strings.HasSuffix(root, "*") && blocked(pr.resolved, root+".oxpf-tmp")) {
+			return ErrPrivacy
+		}
+		// Resolve the fixed parent of a prefix pattern, never a wildcard on the device shell.
+		lookup := root
+		prefix := strings.HasSuffix(root, "*")
+		if prefix {
+			lookup = path.Dir(root)
+		}
+		r, err := e.probe(ctx, lookup)
+		if err != nil {
+			return err
+		}
+		resolved := r.resolved
+		if prefix {
+			resolved = path.Join(resolved, path.Base(root))
+		}
+		if blocked(pr.resolved, resolved) || (!prefix && blocked(pr.resolved, resolved+".oxpf-tmp")) {
+			return ErrPrivacy
+		}
+	}
+	return nil
 }

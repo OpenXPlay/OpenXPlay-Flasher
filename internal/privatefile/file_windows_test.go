@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"unsafe"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/privatefile"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/testfile"
@@ -80,4 +81,36 @@ func TestPrivateFilesInSharedDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	testfile.Private(t, tmp.Name())
+}
+
+func TestPrivateStoreTightensSharedDirectory(t *testing.T) {
+	dir := t.TempDir()
+	shareFile(t, dir, "OICI")
+	if err := privatefile.Dir(dir); err != nil {
+		t.Fatal(err)
+	}
+	sd, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, _, err := sd.Control()
+	if err != nil || control&windows.SE_DACL_PROTECTED == 0 {
+		t.Fatal("store still inherits shared access", err)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil || dacl == nil || dacl.AceCount != 1 {
+		t.Fatal("store has extra access entries", err)
+	}
+	var ace *windows.ACCESS_ALLOWED_ACE
+	if err := windows.GetAce(dacl, 0, &ace); err != nil {
+		t.Fatal(err)
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+	if !sid.Equals(user.User.Sid) || ace.Header.AceFlags&(windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE) != (windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE) {
+		t.Fatal("store does not give private inheritance to current user")
+	}
 }

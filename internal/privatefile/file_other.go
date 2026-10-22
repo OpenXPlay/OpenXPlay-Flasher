@@ -25,3 +25,18 @@ func Append(path string) (*os.File, error) {
 	}
 	return f, nil
 }
+
+// Dir creates or tightens the application's private store directory.
+func Dir(path string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return &os.PathError{Op: "private directory", Path: path, Err: os.ErrInvalid}
+	}
+	return os.Chmod(path, 0o700)
+}

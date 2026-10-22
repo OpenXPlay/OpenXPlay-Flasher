@@ -125,7 +125,10 @@ func writePolicy(t ConfigTarget, p string, restart bool) (format, service string
 // ConfigRead reads a file from the device.
 func (s *Service) ConfigRead(ctx context.Context, p string) (config.File, error) {
 	var f config.File
-	err := s.withEditor(ctx, func(ed *config.Editor, _ ConfigTarget) (err error) {
+	err := s.withEditor(ctx, func(ed *config.Editor, t ConfigTarget) (err error) {
+		if err = ed.CheckRawPath(ctx, p, privatePaths(t)); err != nil {
+			return err
+		}
 		f, err = ed.Read(ctx, p)
 		return err
 	})
@@ -136,6 +139,9 @@ func (s *Service) ConfigRead(ctx context.Context, p string) (config.File, error)
 func (s *Service) ConfigWrite(ctx context.Context, p, content string, restart bool) (config.WriteResult, error) {
 	var res config.WriteResult
 	err := s.withEditor(ctx, func(ed *config.Editor, t ConfigTarget) (err error) {
+		if err = ed.CheckRawPath(ctx, p, privatePaths(t)); err != nil {
+			return err
+		}
 		format, service := writePolicy(t, p, restart)
 		res, err = ed.Write(ctx, config.WriteRequest{Path: p, Content: content, Format: format, Service: service})
 		return err
@@ -146,7 +152,10 @@ func (s *Service) ConfigWrite(ctx context.Context, p, content string, restart bo
 // ConfigBackups lists the kept versions of a file on the device.
 func (s *Service) ConfigBackups(ctx context.Context, p string) ([]config.Backup, error) {
 	var list []config.Backup
-	err := s.withEditor(ctx, func(ed *config.Editor, _ ConfigTarget) (err error) {
+	err := s.withEditor(ctx, func(ed *config.Editor, t ConfigTarget) (err error) {
+		if err = ed.CheckRawPath(ctx, p, privatePaths(t)); err != nil {
+			return err
+		}
 		list, err = ed.Backups(ctx, p)
 		return err
 	})
@@ -157,9 +166,83 @@ func (s *Service) ConfigBackups(ctx context.Context, p string) ([]config.Backup,
 func (s *Service) ConfigRestore(ctx context.Context, p, id string, restart bool) (config.WriteResult, error) {
 	var res config.WriteResult
 	err := s.withEditor(ctx, func(ed *config.Editor, t ConfigTarget) (err error) {
+		if err = ed.CheckRawPath(ctx, p, privatePaths(t)); err != nil {
+			return err
+		}
 		_, service := writePolicy(t, p, restart)
 		res, err = ed.Restore(ctx, p, id, service)
 		return err
 	})
 	return res, err
+}
+
+func privatePaths(t ConfigTarget) []string {
+	var paths []string
+	for _, f := range t.Files {
+		if f.Category == "privacy" {
+			paths = append(paths, f.Path)
+			paths = append(paths, f.PrivatePaths...)
+		}
+	}
+	return paths
+}
+
+// ConfigCheckRaw checks export paths using the same gate as raw reads and writes.
+func (s *Service) ConfigCheckRaw(ctx context.Context, p string) error {
+	return s.withEditor(ctx, func(ed *config.Editor, t ConfigTarget) error { return ed.CheckRawPath(ctx, p, privatePaths(t)) })
+}
+
+// ConfigPrivacy performs only typed operations on a profile's privacy entry.
+func (s *Service) ConfigPrivacy(ctx context.Context, id, action string, u config.PublicNameUpdate, data []byte, backup string) (config.PublicNameView, []config.Backup, error) {
+	var v config.PublicNameView
+	var backups []config.Backup
+	err := s.withEditor(ctx, func(ed *config.Editor, t ConfigTarget) (err error) {
+		var p string
+		for _, f := range t.Files {
+			if f.ID == id && f.Category == "privacy" && f.Format == "public-name" {
+				p = f.Path
+			}
+		}
+		if p == "" {
+			return config.ErrPrivacy
+		}
+		switch action {
+		case "read":
+			v, err = ed.PublicNameRead(ctx, p)
+		case "write":
+			v, err = ed.PublicNameWrite(ctx, p, u)
+		case "import":
+			v, err = ed.PublicNameImport(ctx, p, data)
+		case "restore":
+			v, err = ed.PublicNameRestore(ctx, p, backup)
+		case "remove":
+			err = ed.PublicNameRemove(ctx, p)
+			if err == nil {
+				v, err = ed.PublicNameRead(ctx, p)
+			}
+		case "backups":
+			backups, err = ed.Backups(ctx, p)
+			if err != nil {
+				err = config.ErrPrivateOperation
+			}
+		default:
+			err = config.ErrPrivacy
+		}
+		return err
+	})
+	// Preserve known availability codes without forwarding transport diagnostics.
+	if err != nil {
+		var validation *config.PrivateValidationError
+		if !errors.As(err, &validation) {
+			safe := config.ErrPrivateOperation
+			for _, known := range []error{config.ErrPrivacy, ErrNoDevice, ErrSeveralDevices, ErrNoADB, ErrNotADB, ErrUnconfirmed, ErrNoConfigProfile, adb.ErrNoDevice, adb.ErrBusy} {
+				if errors.Is(err, known) {
+					safe = known
+					break
+				}
+			}
+			err = safe
+		}
+	}
+	return v, backups, err
 }

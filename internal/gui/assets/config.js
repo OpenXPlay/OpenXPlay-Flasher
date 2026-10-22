@@ -8,10 +8,15 @@
 
 import { t, lang } from "./i18n.js";
 import { api, el } from "./ui.js";
-import { checkContent, errorText } from "./configlogic.js";
+import { privacyView, resetPrivacy } from "./privacy.js";
+import { checkContent, errorText, isPrivateImport } from "./configlogic.js";
 
 const view = {
   boot: {},
+  category: "user",
+  rawBlocked: false,
+  openTarget: "",
+  openEntry: null,
   target: null, // GET /api/config, or null
   unavailable: "", // its error code
   loading: false,
@@ -35,11 +40,25 @@ export function init(boot) {
 
 // refresh asks which device and files the view works on; called when the view opens and when the
 // attached devices change.
-export async function refresh() {
+export async function refresh(entered = false) {
+  if (entered) resetPrivacy();
   try {
-    view.target = await api("config");
+    const target = await api("config");
+    if (view.target && JSON.stringify(view.target) !== JSON.stringify(target)) resetPrivacy();
+    if (view.openTarget && view.openTarget !== JSON.stringify(target)) {
+      resetPrivacy();
+      view.rawBlocked = true;
+      view.confirm = "";
+      view.backups = null;
+    }
+    if (view.openTarget === JSON.stringify(target)) view.rawBlocked = false;
+    view.target = target;
     view.unavailable = "";
   } catch (err) {
+    resetPrivacy();
+    view.rawBlocked = !!view.file;
+    view.confirm = "";
+    view.backups = null;
     view.target = null;
     view.unavailable = err.code || "device";
   }
@@ -47,6 +66,7 @@ export async function refresh() {
 }
 
 function entryFor(path) {
+  if (view.file && view.path === path) return view.openEntry;
   return view.target && view.target.files.find((f) => f.path === path);
 }
 
@@ -64,11 +84,14 @@ async function open(path) {
     render();
     return;
   }
-  Object.assign(view, { path, file: null, text: "", busy: "reading", confirm: "", result: null, backups: null, restart: false });
+  const openEntry = view.target && view.target.files.find((f) => f.path === path);
+  Object.assign(view, { openEntry, path, file: null, text: "", busy: "reading", confirm: "", result: null, backups: null, restart: false });
   render();
   try {
     view.file = await api("config/read", { path });
     view.text = view.file.content;
+    view.openTarget = JSON.stringify(view.target);
+    view.rawBlocked = false;
   } catch (err) {
     view.path = "";
     view.result = { kind: "error", text: errorText(t, err) };
@@ -89,6 +112,7 @@ function writeOutcome(res) {
 }
 
 async function save() {
+  if (view.rawBlocked || !view.target) return;
   view.busy = "saving";
   view.confirm = "";
   render();
@@ -114,6 +138,7 @@ async function showBackups() {
 }
 
 async function restore(id) {
+  if (view.rawBlocked || !view.target) return;
   view.busy = "restoring";
   view.confirm = "";
   render();
@@ -136,7 +161,11 @@ async function importFile() {
     input.addEventListener("change", () => {
       const file = input.files && input.files[0];
       if (!file) return;
-      file.text().then((text) => { view.text = text; view.result = null; render(); });
+      file.text().then((text) => {
+        if (isPrivateImport(text)) view.result = { kind: "error", text: errorText(t, { code: "privacy" }) };
+        else { view.text = text; view.result = null; }
+        render();
+      });
     });
     input.click();
     return;
@@ -171,7 +200,7 @@ async function exportFile() {
 }
 
 function fileList() {
-  const items = view.target.files.map((f) =>
+  const items = view.target.files.filter((f) => f.category === view.category).map((f) =>
     el("li", {}, el("button", {
       type: "button",
       class: "file" + (f.path === view.path ? " current" : ""),
@@ -256,21 +285,15 @@ function editor() {
   parts.push(el("div", { class: "actions" }, [
     el("button", {
       id: "config-save", type: "button", class: "primary",
-      disabled: view.busy !== "" || !check.ok || !dirty(),
+      disabled: view.busy !== "" || view.rawBlocked || !view.target || !check.ok || !dirty(),
       onclick: () => { view.confirm = "save"; render(); },
     }, t("Save to device")),
     el("button", { type: "button", disabled: view.busy !== "", onclick: () => open(view.path) }, t("Reload")),
     el("button", { type: "button", disabled: view.busy !== "", onclick: importFile }, t("Import…")),
     el("button", { type: "button", disabled: view.busy !== "", onclick: exportFile }, t("Export…")),
-    el("button", { type: "button", disabled: view.busy !== "" || !(view.file && view.file.exists), onclick: showBackups }, t("Earlier versions")),
+    el("button", { type: "button", disabled: view.busy !== "" || view.rawBlocked || !(view.file && view.file.exists), onclick: showBackups }, t("Earlier versions")),
   ]));
   if (busyText) parts.push(el("p", { class: "status wait" }, [el("span", { class: "dot" }), busyText]));
-  if (view.result) {
-    parts.push(el("div", { class: view.result.kind === "ok" ? "result ok" : "error-box" }, [
-      view.result.text,
-      view.result.log ? el("pre", {}, view.result.log) : "",
-    ]));
-  }
   if (view.backups) {
     const fmt = new Intl.DateTimeFormat(lang(), { dateStyle: "medium", timeStyle: "medium" });
     parts.push(el("div", { class: "backups" }, [
@@ -278,7 +301,7 @@ function editor() {
       view.backups.length === 0 ? el("p", { class: "note" }, t("No earlier versions yet.")) :
         el("ul", {}, view.backups.map((b) => el("li", {}, [
           el("span", {}, fmt.format(new Date(b.time))),
-          el("button", { type: "button", disabled: view.busy !== "", onclick: () => { view.confirm = "restore:" + b.id; render(); } }, t("Restore")),
+          el("button", { type: "button", disabled: view.busy !== "" || view.rawBlocked, onclick: () => { view.confirm = "restore:" + b.id; render(); } }, t("Restore")),
         ]))),
     ]));
   }
@@ -291,42 +314,74 @@ function updateState() {
   const entry = entryFor(view.path);
   const check = checkContent(entry ? entry.format : "text", view.text);
   const save = document.getElementById("config-save");
-  if (save) save.disabled = view.busy !== "" || !check.ok || !dirty();
+  if (save) save.disabled = view.busy !== "" || view.rawBlocked || !view.target || !check.ok || !dirty();
   const line = document.getElementById("config-check");
   if (line) {
     line.className = "check " + (check.ok ? "ok" : "bad");
     line.textContent = check.ok ? ((entry && entry.format === "json") ? t("Valid JSON") : "") : t("Not valid JSON: {msg}", { msg: check.message });
   }
-  const result = root.querySelector(".result, .editor > .error-box");
+  const result = document.getElementById("config-result");
   if (result && view.result === null) result.remove();
 }
 
 export function render() {
   if (!root) return;
   const focusedId = document.activeElement && root.contains(document.activeElement) ? document.activeElement.id : "";
-  const area = document.getElementById("config-text");
-  const caret = area ? [area.selectionStart, area.selectionEnd, area.scrollTop] : null;
+  const area = focusedId ? document.getElementById(focusedId) : null;
+  const caret = area && typeof area.selectionStart === "number" ? [area.selectionStart, area.selectionEnd, area.scrollTop] : null;
 
-  const parts = [el("h2", {}, t("Device configuration"))];
+  const parts = [el("h2", {}, t("Device configuration")),
+    el("div", { class: "actions config-categories", role: "group", "aria-label": t("Configuration") },
+      [["system", t("System")], ["user", t("User")], ["privacy", t("Privacy")]].map(([category, label]) => el("button", {
+        type: "button", "aria-pressed": view.category === category ? "true" : "false", disabled: view.busy !== "",
+        onclick: () => {
+          const change = () => {
+            resetPrivacy();
+            Object.assign(view, { category, path: "", file: null, text: "", confirm: "", backups: null, result: null, rawBlocked: false, openTarget: "" });
+            render();
+          };
+          if (dirty()) {
+            view.confirm = "category:" + category;
+            render();
+          } else change();
+        },
+      }, label)))];
+  if (view.category === "system") parts.push(el("p", { class: "note system-warning" }, t("Wrong values here can keep the relay from starting.")));
+  if (view.confirm.startsWith("category:")) {
+    const category = view.confirm.slice(9);
+    parts.push(confirmBar(t("Discard your changes to this file?"), () => {
+      resetPrivacy();
+      Object.assign(view, { category, path: "", file: null, text: "", confirm: "", backups: null, result: null, rawBlocked: false, openTarget: "" });
+      render();
+    }, t("Discard")));
+  }
   if (!view.target) {
     parts.push(el("div", { class: "status wait" }, [el("span", { class: "dot" }), el("p", {}, errorText(t, { code: view.unavailable }))]));
+    if (view.file && view.category !== "privacy") parts.push(editor());
   } else {
     const discard = view.confirm.indexOf("discard:") === 0 ? view.confirm.slice(8) : "";
-    const body = [fileList()];
-    if (view.path) body.push(editor());
-    else body.push(el("p", { class: "note pick" }, t("Choose a file to read it from the device.")));
-    parts.push(el("div", { class: "config-body" }, body));
-    if (discard) {
-      parts.splice(1, 0, confirmBar(t("Discard your changes to this file?"), () => { view.file = null; open(discard); }, t("Discard")));
+    if (view.category === "privacy") {
+      const file = view.target.files.find((f) => f.category === "privacy");
+      if (file) parts.push(privacyView(file, view.boot.web, render));
+    } else {
+      const body = [fileList()];
+      if (view.path) body.push(editor());
+      else body.push(el("p", { class: "note pick" }, t("Choose a file to read it from the device.")));
+      parts.push(el("div", { class: "config-body" }, body));
+      if (discard) {
+        parts.splice(1, 0, confirmBar(t("Discard your changes to this file?"), () => { view.file = null; open(discard); }, t("Discard")));
+      }
     }
   }
+  if (view.rawBlocked && view.file && view.category !== "privacy") parts.push(el("p", { class: "note" }, t("The device changed or is unavailable. Your edits are kept. Reload before saving.")));
+  if (view.result && view.category !== "privacy") parts.push(el("div", { id: "config-result", class: view.result.kind === "ok" ? "result ok" : "error-box", role: "status" }, [view.result.text, view.result.log ? el("pre", {}, view.result.log) : ""]));
   root.replaceChildren(...parts);
 
   if (focusedId) {
     const again = document.getElementById(focusedId);
     if (again) again.focus();
   }
-  const fresh = document.getElementById("config-text");
+  const fresh = focusedId ? document.getElementById(focusedId) : null;
   if (fresh && caret) {
     fresh.setSelectionRange(caret[0], caret[1]);
     fresh.scrollTop = caret[2];

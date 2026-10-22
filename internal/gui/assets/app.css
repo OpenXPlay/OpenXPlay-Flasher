@@ -577,3 +577,12 @@ progress { width: 100%; height: 10px; accent-color: var(--accent); }
 .devices button:disabled, #device-selection button:disabled { opacity:.55;cursor:default; }
 .ssh-form input { padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit; }
 .devices a { color:var(--accent); }
+.config-categories { margin-bottom: 16px; }
+.config-categories [aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.system-warning { margin-bottom: 16px; }
+.privacy { max-width: 680px; }
+.privacy h3, .privacy p { margin: 0; }
+.privacy > input, .privacy > select {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text); background: var(--surface); font: inherit;
+}

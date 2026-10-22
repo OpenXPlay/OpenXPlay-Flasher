@@ -220,7 +220,7 @@ function showView(name) {
   document.getElementById("view-install").hidden = name !== "install";
   document.getElementById("view-config").hidden = name !== "config";
   document.getElementById("view-settings").hidden = name !== "settings";
-  if (name === "config") configView.refresh();
+  if (name === "config") configView.refresh(true);
   if (name === "install" && selectionReady()) installView.refresh();
   if (name === "settings") loadInfo();
 }
