@@ -32,6 +32,7 @@ type InstallTarget struct {
 }
 
 type InstallState struct {
+	ChainNotice    profile.Text         `json:"chainNotice,omitempty"`
 	FileCheck      *FileCheck           `json:"fileCheck,omitempty"`
 	FileResults    []FileResult         `json:"fileResults"`
 	NextSteps      NextSteps            `json:"nextSteps"`
@@ -131,6 +132,13 @@ func (s *Service) installSnapshotLocked() InstallState {
 			}
 		}
 	}
+	if p.ID == "" && base.IncompleteChain(s.unfinished) {
+		for _, candidate := range s.profiles {
+			if candidate.ID == s.unfinished.Profile {
+				p = candidate
+			}
+		}
+	}
 	if state.Installed != nil {
 		state.Choices = stage.BuildChoices(p, *state.Installed, s.preparedPackagesLocked(s.packages), false)
 		for i := range state.Choices {
@@ -140,6 +148,8 @@ func (s *Service) installSnapshotLocked() InstallState {
 		}
 		state.Layers = stage.LayerRows(p, *state.Installed, state.Choices)
 		state.Suggested = stage.SuggestedChoice(state.Choices, *state.Installed)
+	}
+	if state.Installed != nil || base.IncompleteChain(s.unfinished) {
 		s.extendBaseChoicesLocked(&state, p)
 	}
 	return state
@@ -222,6 +232,10 @@ func (s *Service) inspectInstall(ctx context.Context, choice string) (profile.Pr
 	defer s.mu.Unlock()
 	s.installProblem = nil
 	if err != nil {
+		if base.IncompleteChain(s.unfinished) {
+			err = &stage.Problem{Code: "chain-incomplete"}
+			s.baseIdentity = nil
+		}
 		s.installProblem = installProblem(err)
 		s.installStale = s.installed != nil
 	} else {

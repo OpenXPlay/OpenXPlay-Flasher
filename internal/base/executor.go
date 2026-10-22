@@ -46,6 +46,10 @@ type Executor struct {
 	Choice          string
 	Journal         *Journal
 	previousChain   bool
+	resumeChain     bool
+	tableChanged    bool
+	partitionSizes  map[string]int64
+	chainConnection *device.Candidate
 	restoreSet      string
 	fb              Fastboot
 	candidate       *device.Candidate
@@ -93,6 +97,8 @@ func (e *Executor) save(ctx context.Context) error {
 func (e *Executor) Run(ctx context.Context, plan Plan) stage.Job {
 	e.serial, e.start = plan.Serial, plan.Start
 	e.previousChain, e.restoreSet = false, ""
+	e.resumeChain, e.tableChanged = false, false
+	e.partitionSizes, e.chainConnection, e.Journal = nil, nil, nil
 	e.job = stage.Job{Profile: e.Profile.ID, Serial: plan.Serial, Plan: plan.Kind, Status: "running", Started: time.Now(), Failed: -1, Steps: []stage.StepProgress{}, Findings: map[string]string{}}
 	for _, s := range Steps(plan) {
 		e.job.Steps = append(e.job.Steps, stage.StepProgress{Step: s, Status: "pending"})
@@ -106,30 +112,70 @@ func (e *Executor) Run(ctx context.Context, plan Plan) stage.Job {
 	}()
 	var err error
 	canonical := BuildPlan(e.Profile, plan.Kind, plan.Start)
+	var previous *Journal
+	if canonical.Problem == nil {
+		previous, err = e.Journals.RepairSource(ctx, e.Profile.ID, plan.Serial)
+		if IncompleteChain(previous) {
+			e.resumeChain = true
+			if plan.Kind != "repair" {
+				err = &stage.Problem{Code: "chain-incomplete"}
+			}
+		}
+		if plan.Kind == "repair" {
+			canonical = BuildRepairPlan(e.Profile, plan.Start, previous)
+		}
+	}
 	if plan.Problem != nil {
 		err = plan.Problem
-	} else if canonical.Problem != nil || !reflect.DeepEqual(canonical, plan) {
+	} else if canonical.Problem != nil {
+		err = canonical.Problem
+	} else if !reflect.DeepEqual(canonical, plan) {
 		err = &stage.Problem{Code: "bad-plan"}
 	}
 	if err == nil && (e.Detector == nil || e.Files == nil || e.Store == nil) {
 		err = &stage.Problem{Code: "base-unavailable"}
+	}
+	if err == nil && e.resumeChain {
+		// A missing device is a stop, never a reason to reboot into fastboot. Older journals
+		// lack a connection record, so they can only bind continuation to product and serial.
+		if previous.ChainConnection != nil {
+			e.chainConnection = &device.Candidate{USB: *previous.ChainConnection}
+		}
+		if e.fastboot(ctx, e.Profile.Base.Fastboot.Product) != nil {
+			err = &stage.Problem{Code: "chain-incomplete"}
+		}
+		e.tableChanged = slices.Contains(previous.Completed, "chain-partition")
 	}
 	if err == nil {
 		err = e.Files.Prepare(ctx)
 	}
 	if err == nil {
 		e.Store.Author = e.Files.AuthorHashes()
-		if plan.Kind == "repair" {
-			var previous *Journal
-			previous, err = e.Journals.RepairSource(ctx, e.Profile.ID, plan.Serial)
-			if previous != nil {
-				e.previousChain, e.restoreSet = true, previous.RepairSet()
-			}
+		if plan.Kind == "repair" && previous != nil {
+			e.previousChain, e.restoreSet = true, previous.RepairSet()
 		}
 	}
 	if err == nil {
 		e.Journal = &Journal{Schema: JournalSchema, Profile: e.Profile.ID, Serial: plan.Serial, Plan: plan.Kind, Choice: e.Choice, Started: e.job.Started.UTC(), Completed: []string{}, CompletedAt: map[string]time.Time{}}
+		if e.Journal.Choice == "" {
+			e.Journal.Choice = plan.Kind
+		}
 		e.Journal.RestoreSet = e.restoreSet
+		if e.resumeChain {
+			e.Journal.Completed = slices.Clone(previous.Completed)
+			e.Journal.CompletedAt = maps.Clone(previous.CompletedAt)
+			if e.Journal.CompletedAt == nil {
+				e.Journal.CompletedAt = map[string]time.Time{}
+			}
+			e.Journal.InFlight = previous.InFlight
+			e.Journal.ChainConnection = previous.ChainConnection
+			e.Journal.CapturedSet = previous.CapturedSet
+			e.Journal.Choice = previous.Choice
+			if e.Journal.Choice == "" {
+				e.Journal.Choice = previous.Plan
+			}
+			e.job.Findings["restoreSet"] = e.restoreSet
+		}
 		err = e.save(ctx)
 	}
 	window := ""
@@ -196,7 +242,7 @@ func (e *Executor) Run(ctx context.Context, plan Plan) stage.Job {
 		e.job.Status = "failed"
 		e.job.Problem = problem(err)
 		e.job.Left = "unchanged"
-		if len(e.job.Written) > 0 || e.job.Uncertain != "" {
+		if len(e.job.Written) > 0 || e.job.Uncertain != "" || e.resumeChain {
 			e.job.Left = "partial"
 		}
 		for _, s := range e.job.Steps {
@@ -221,6 +267,9 @@ func (e *Executor) fastboot(ctx context.Context, product string) error {
 	c, err := OneCandidate(e.Detector.Scan(ctx), profile.ModeFastboot)
 	if err != nil {
 		return err
+	}
+	if e.chainConnection != nil && !sameConnection(*c, *e.chainConnection) {
+		return &stage.Problem{Code: "chain-incomplete"}
 	}
 	if e.fb == nil || e.candidate == nil || !sameConnection(*c, *e.candidate) {
 		if e.fb != nil {
@@ -467,17 +516,23 @@ func (e *Executor) step(ctx context.Context, s Step) error {
 		} else {
 			e.Journal.CapturedSet = captured.Set
 			e.job.Findings["backupSet"] = captured.Set
-			e.job.Findings["backupComparison"] = "first / 首次备份"
-			if captured.ComparisonError {
-				e.job.Findings["backupComparison"] = "unavailable / 无法比对"
-			}
 			if captured.PreviousSet != "" {
 				e.job.Findings["backupPreviousSet"] = captured.PreviousSet
-				e.job.Findings["backupComparison"] = "matched / 相同"
 				if !captured.MatchedPrevious {
-					e.job.Findings["backupComparison"] = "different / 不同"
 					e.job.Findings["backupDiffering"] = strings.Join(captured.Differing, ", ")
 				}
+			}
+			switch {
+			case captured.ComparisonError:
+				e.job.Findings["backupComparison"] = "unavailable / 无法比对"
+			case captured.PreviousSet == "":
+				e.job.Findings["backupComparison"] = "first / 首次备份"
+			case captured.MatchedPrevious:
+				e.job.Findings["backupComparison"] = "matched / 相同"
+			case captured.GrownOnly:
+				e.job.Findings["backupComparison"] = "larger / 分区增大，数据未变"
+			default:
+				e.job.Findings["backupComparison"] = "different / 不同"
 			}
 			if e.job.Plan != "system" && !e.previousChain {
 				e.restoreSet = captured.Set
@@ -511,6 +566,10 @@ func (e *Executor) step(ctx context.Context, s Step) error {
 		if err == nil && e.candidate != nil {
 			before := *e.candidate
 			e.reconnect = &before
+		}
+		if err == nil {
+			e.tableChanged = false
+			e.chainConnection = nil
 		}
 		e.closeFastboot()
 		return err
@@ -585,7 +644,14 @@ func (e *Executor) write(ctx context.Context, s Step) error {
 			e.Progress(event)
 		}
 	}
-	return e.fb.Flash(ctx, s.Partition, img, fastboot.FlashOptions{MaxPiece: e.Profile.Base.Fastboot.MaxPiece, BeforeWrite: func(ctx context.Context) error {
+	capacity := int64(0)
+	if e.tableChanged && s.Partition != "partition" {
+		capacity = e.partitionSizes[s.Partition]
+		if capacity <= 0 {
+			return &stage.Problem{Code: "gpt-capacity", Detail: s.Partition}
+		}
+	}
+	err = e.fb.Flash(ctx, s.Partition, img, fastboot.FlashOptions{MaxPiece: e.Profile.Base.Fastboot.MaxPiece, PartitionSize: capacity, BeforeWrite: func(ctx context.Context) error {
 		c, err := OneCandidate(e.Detector.Scan(ctx), profile.ModeFastboot)
 		if err != nil {
 			return err
@@ -597,6 +663,10 @@ func (e *Executor) write(ctx context.Context, s Step) error {
 		e.job.Observed = false
 		return nil
 	}}, progress)
+	if err == nil && s.Partition == "partition" {
+		e.tableChanged = true
+	}
+	return err
 }
 
 // preflightChain checks the entire restore set and every bootloader input before the first GPT
@@ -605,16 +675,51 @@ func (e *Executor) preflightChain(ctx context.Context, plan Plan) error {
 	if err := e.validateRestore(ctx); err != nil {
 		return err
 	}
+	gpt, err := e.Files.Open(ctx, "gpt")
+	if err != nil {
+		return err
+	}
+	if gpt.Sparse() {
+		gpt.Close()
+		return &stage.Problem{Code: "gpt-invalid", Detail: "sparse partition table"}
+	}
+	e.partitionSizes, err = gptSizes(gpt, gpt.Size())
+	gpt.Close()
+	if err != nil {
+		return &stage.Problem{Code: "gpt-invalid", Detail: err.Error()}
+	}
 	for _, s := range plan.Steps {
-		if s.Window == "chain" && s.Action == "flash" {
-			img, err := e.Files.Open(ctx, s.FileID)
+		if s.Window == "chain" && (s.Action == "flash" || s.Action == "restore") {
+			var img *fastboot.Image
+			if s.Action == "restore" {
+				img, err = e.Store.OpenRestore(ctx, e.serial, e.restoreSet, s.Partition)
+			} else {
+				img, err = e.Files.Open(ctx, s.FileID)
+			}
 			if err != nil {
 				return err
 			}
+			size := img.Size()
 			img.Close()
+			if s.Partition != "partition" {
+				capacity := e.partitionSizes[s.Partition]
+				if capacity <= 0 {
+					return &stage.Problem{Code: "gpt-capacity", Detail: s.Partition}
+				}
+				if size > capacity {
+					return &fastboot.PartitionSizeError{Partition: s.Partition, ImageSize: size, PartitionSize: capacity}
+				}
+			}
 		}
 	}
-	return e.fastboot(ctx, e.Profile.Base.Fastboot.Product)
+	if err = e.fastboot(ctx, e.Profile.Base.Fastboot.Product); err != nil {
+		return err
+	}
+	connection := *e.candidate
+	e.chainConnection = &connection
+	info := connection.USB
+	e.Journal.ChainConnection = &info
+	return nil
 }
 
 func (e *Executor) validateRestore(ctx context.Context) error {

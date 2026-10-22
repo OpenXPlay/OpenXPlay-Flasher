@@ -15,24 +15,27 @@ import (
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/catalog"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 )
 
 const JournalSchema = "org.openxplay.flasher-job/1"
 
 type Journal struct {
-	CompletedAt map[string]time.Time `json:"completedAt,omitempty"`
-	Schema      string               `json:"schema"`
-	Profile     string               `json:"profile"`
-	Serial      string               `json:"serial"`
-	Plan        string               `json:"plan"`
-	Choice      string               `json:"choice"`
-	Started     time.Time            `json:"started"`
-	Updated     time.Time            `json:"updated"`
-	Completed   []string             `json:"completed"`
-	InFlight    string               `json:"inFlight,omitempty"`
-	CapturedSet string               `json:"capturedSet,omitempty"`
-	RestoreSet  string               `json:"restoreSet,omitempty"`
-	Finished    bool                 `json:"finished"`
+	chainSuperseded bool                 // Derived from newer jobs; never persisted.
+	ChainConnection *usb.DeviceInfo      `json:"chainConnection,omitempty"`
+	CompletedAt     map[string]time.Time `json:"completedAt,omitempty"`
+	Schema          string               `json:"schema"`
+	Profile         string               `json:"profile"`
+	Serial          string               `json:"serial"`
+	Plan            string               `json:"plan"`
+	Choice          string               `json:"choice"`
+	Started         time.Time            `json:"started"`
+	Updated         time.Time            `json:"updated"`
+	Completed       []string             `json:"completed"`
+	InFlight        string               `json:"inFlight,omitempty"`
+	CapturedSet     string               `json:"capturedSet,omitempty"`
+	RestoreSet      string               `json:"restoreSet,omitempty"`
+	Finished        bool                 `json:"finished"`
 }
 
 type Journals struct{ Dir string }
@@ -103,16 +106,45 @@ func enteredChain(j Journal) bool {
 	return chain(j.InFlight) || slices.ContainsFunc(j.Completed, chain)
 }
 
+func chainProven(j Journal) bool {
+	if slices.Contains(j.Completed, "chain-reboot") || slices.Contains(j.Completed, "verify-linux") || slices.Contains(j.Completed, "confirm-linux") {
+		return true
+	}
+	// Older system plans used the generic confirm ID for their Linux identity check.
+	// Stock and repair plans could also confirm stock firmware, which proves nothing here.
+	return j.Plan == "system" && slices.Contains(j.Completed, "confirm")
+}
+
+// IncompleteChain remains true through a failed or uncertain final chain reboot. A repair
+// inherits the completed prefix, so repeated interruptions cannot hide earlier chain writes.
+// RepairSource clears that requirement when a newer job proves the chain can boot.
+func IncompleteChain(j *Journal) bool {
+	return j != nil && !j.chainSuperseded && !j.Finished && enteredChain(*j) && !slices.Contains(j.Completed, "chain-reboot")
+}
+
+// SameChainConnection also supports journals predating USB connection records. Those still
+// require a fresh lk1st product and serial check before any continuation is accepted.
+func (j Journal) SameChainConnection(info usb.DeviceInfo) bool {
+	return j.ChainConnection == nil || j.ChainConnection.ID() == info.ID() && j.ChainConnection.Location() == info.Location() && j.ChainConnection.Address == info.Address
+}
+
 // RepairSource ignores newer jobs that never entered the chain. RestoreSet preserves the
 // original safe source across repeated repairs whose own fresh captures may be unusable.
+// A superseded journal no longer requires an in-place continuation, but its original backup
+// remains the safe restore source for a full repair; proof of booting does not replace it.
 func (j Journals) RepairSource(ctx context.Context, profile, serial string) (*Journal, error) {
 	history, err := j.History(ctx, profile, serial)
 	if err != nil {
 		return nil, err
 	}
+	var proven time.Time
 	for _, v := range history {
 		if enteredChain(v) {
+			v.chainSuperseded = proven.After(v.Started)
 			return &v, nil
+		}
+		if chainProven(v) && v.Started.After(proven) {
+			proven = v.Started
 		}
 	}
 	return nil, nil

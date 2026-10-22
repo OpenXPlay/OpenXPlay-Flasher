@@ -57,6 +57,66 @@ function ready(s) {
 }
 const boot = { web: true, links: { en: { manual: "https://openxplay.org/en/ufi003-flash" }, "zh-CN": { manual: "https://openxplay.org/ufi003-flash" } } };
 
+for (const language of ["en", "zh-CN"]) test("backup findings distinguish partition growth from EFS changes in " + language, async () => {
+  const d = dom(); setLang(language);
+  const savedInterval = globalThis.setInterval;
+  globalThis.setInterval = () => 0;
+  const page = await import("../assets/install.js?backup-growth-" + language);
+  page.init(boot);
+  globalThis.setInterval = savedInterval;
+  const growth = {
+    en: "The modem partitions are larger in the new partition table; the data is unchanged and was saved as a new backup set at the new size.",
+    "zh-CN": "新分区表中的调制解调器分区容量更大，数据没有变化；已按新的分区大小另存为备份集。",
+  };
+  const efs = {
+    en: "The modem's EFS data changes while Linux runs. This is normal; a new backup set was saved.",
+    "zh-CN": "Linux 运行期间，调制解调器的 EFS 数据会发生正常变化；已另存为新的备份集。",
+  };
+  for (const comparison of ["larger / 分区增大，数据未变", "different / 不同", "matched / 相同", "unavailable / 无法比对"]) {
+    const s = snapshot();
+    s.job = { status: "succeeded", started: "2026-10-22T03:00:00Z", finished: "2026-10-22T03:01:00Z", observed: true,
+      installed: s.installed, steps: [], findings: { backupComparison: comparison }, log: "" };
+    page.receive(s);
+    assert.equal(d.root.textContent.includes(growth[language]), comparison.startsWith("larger"));
+    assert.equal(d.root.textContent.includes(efs[language]), comparison.startsWith("different"));
+  }
+});
+
+for (const language of ["en", "zh-CN"]) test("unfinished chain explains in-place Repair and stops when disconnected in " + language, async () => {
+  const d = dom(); setLang(language);
+  const savedInterval = globalThis.setInterval;
+  globalThis.setInterval = () => 0;
+  const page = await import("../assets/install.js?chain-" + language);
+  page.init(boot);
+  globalThis.setInterval = savedInterval;
+  const s = snapshot();
+  s.identity = { mode: "fastboot", serial: "fake-device" };
+  s.resume = { finished: false, inFlight: "chain-tz" };
+  s.suggested = "repair";
+  s.chainNotice = { en: "The boot chain was not finished. Keep the dongle connected; Repair continues from chain-tz without restarting it.",
+    "zh-CN": "引导链尚未写完。请保持设备连接；修复将从 chain-tz 继续，不会先重启设备。" };
+  s.choices = [{ id: "repair", name: { en: "Repair", "zh-CN": "修复" }, layers: ["base"], destructive: true, ready: true, needs: [],
+    steps: [{ layer: "base", action: "flash", id: "chain-tz", name: { en: "Write tz", "zh-CN": "写入 tz" }, critical: true, resumable: false }] }];
+  s.job = { plan: "stock", status: "failed", started: "2026-10-21T00:00:00Z", finished: "2026-10-21T00:01:00Z",
+    steps: [{ ...s.choices[0].steps[0], status: "failed" }], failed: 0, left: "partial", problem: { code: "base", detail: "transport failure" }, log: "" };
+  page.receive(s);
+  assert.ok(d.root.textContent.includes(s.chainNotice[language]));
+  assert.equal(d.button("Repair").disabled, false);
+  await d.button("Repair").click();
+  assert.ok(d.nodes().some((n) => n.tag === "ol" && n.children.length === 1 && n.textContent.includes("tz")), "preview has only the remaining step");
+  const gone = structuredClone(s);
+  gone.problem = { code: "chain-incomplete" };
+  gone.choices[0].problem = gone.problem;
+  gone.choices[0].ready = false;
+  gone.choices[0].steps = [];
+  gone.chainNotice = { en: "The boot chain was not finished. The dongle is no longer available in the same lk1st fastboot session. Stop here; do not restart the dongle.",
+    "zh-CN": "引导链尚未写完，设备已不在原来的 lk1st fastboot 会话中。请停止操作，不要重启设备。" };
+  page.receive(gone);
+  assert.ok(d.root.textContent.includes(gone.chainNotice[language]));
+  assert.equal(d.get("choice-repair").disabled, true);
+  assert.equal(d.nodes().some((n) => n.tag === "details" && n.className === "choice-steps"), false, "no rebooting preview is offered");
+});
+
 for (const language of ["en", "zh-CN"]) test("rendered layer-first flow, warnings and refresh in " + language, async () => {
   const d = dom(); setLang(language);
   const savedInterval = globalThis.setInterval;

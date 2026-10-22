@@ -64,6 +64,9 @@ func (img *Image) Size() int64 {
 // Sparse reports whether the source file was already an Android sparse image.
 func (img *Image) Sparse() bool { return img.sparse != nil }
 
+// ReadAt reads stored image bytes, for inspecting a verified raw partition table.
+func (img *Image) ReadAt(p []byte, off int64) (int, error) { return img.source.ReadAt(p, off) }
+
 // Close releases the source file. It must not run concurrently with Flash.
 func (img *Image) Close() error { return img.file.Close() }
 

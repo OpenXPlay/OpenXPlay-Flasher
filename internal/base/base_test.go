@@ -28,6 +28,7 @@ import (
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/fastboot"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/testgpt"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 )
 
@@ -70,6 +71,12 @@ func makeFixture(t *testing.T) fixture {
 	bodies := map[string]map[string][]byte{"base-generic": {}, "rootfs-zip": {}}
 	for id, pin := range b.Files {
 		data := []byte("pinned-image-" + id)
+		if id == "gpt" {
+			data = testgpt.Base()
+		}
+		if id == "tz" {
+			data = bytes.Repeat([]byte{0x74}, 605312)
+		}
 		// Small raw fixtures exercise sequencing; fastboot's sparse tests cover actual 200 MiB pieces.
 		pin.Size = int64(len(data))
 		pin.SHA256 = hash(data)
@@ -327,6 +334,9 @@ type fakeFB struct {
 	boot            bool
 	badContext      bool
 	broken          bool
+	stockSizes      map[string]int64
+	sizeQueries     []string
+	sizeOptions     map[string][]int64
 }
 
 func (f *fakeFB) GetVar(_ context.Context, name string) (string, error) {
@@ -338,6 +348,12 @@ func (f *fakeFB) GetVar(_ context.Context, name string) (string, error) {
 	}
 	if name == "serialno" {
 		return f.serial, nil
+	}
+	if partition, ok := strings.CutPrefix(name, "partition-size:"); ok {
+		f.sizeQueries = append(f.sizeQueries, partition)
+		if size, ok := f.stockSizes[partition]; ok {
+			return fmt.Sprintf("0x%x", size), nil
+		}
 	}
 	return "", nil
 }
@@ -358,6 +374,20 @@ func (f *fakeFB) write(ctx context.Context, command string) error {
 func (f *fakeFB) Flash(ctx context.Context, partition string, img *fastboot.Image, opts fastboot.FlashOptions, _ fastboot.Progress) error {
 	if opts.MaxPiece != 200<<20 {
 		return errors.New("wrong piece limit")
+	}
+	if f.sizeOptions == nil {
+		f.sizeOptions = map[string][]int64{}
+	}
+	f.sizeOptions[partition] = append(f.sizeOptions[partition], opts.PartitionSize)
+	capacity := opts.PartitionSize
+	if capacity == 0 {
+		if _, err := f.GetVar(ctx, "partition-size:"+partition); err != nil {
+			return err
+		}
+		capacity = f.stockSizes[partition]
+	}
+	if capacity > 0 && img.Size() > capacity {
+		return &fastboot.PartitionSizeError{Partition: partition, ImageSize: img.Size(), PartitionSize: capacity}
 	}
 	if opts.BeforeWrite != nil {
 		if err := opts.BeforeWrite(ctx); err != nil {

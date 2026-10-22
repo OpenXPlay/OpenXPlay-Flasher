@@ -5,6 +5,8 @@
 package base
 
 import (
+	"slices"
+
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
 )
@@ -14,6 +16,43 @@ type Identity struct {
 	Product  string       `json:"product,omitempty"`
 	Serial   string       `json:"serial"`
 	Location string       `json:"location"`
+}
+
+// BuildRepairPlan continues an unfinished chain in place. Only journaled completions can
+// remove steps; the backup, boot erase and bootloader restart must never precede this suffix.
+func BuildRepairPlan(p profile.Profile, start Identity, previous *Journal) Plan {
+	plan := BuildPlan(p, "repair", start)
+	if !IncompleteChain(previous) {
+		return plan
+	}
+	if p.Base == nil || previous.Profile != p.ID || previous.Serial != start.Serial || start.Mode != profile.ModeFastboot || start.Product != p.Base.Fastboot.Product {
+		plan.Steps = []Step{}
+		plan.Problem = &stage.Problem{Code: "chain-incomplete"}
+		return plan
+	}
+	first := -1
+	for i, s := range plan.Steps {
+		if s.Window != "chain" {
+			continue
+		}
+		if !slices.Contains(previous.Completed, s.ID) {
+			if first < 0 {
+				first = i
+			}
+		} else if first >= 0 {
+			// A sequential window cannot have a completed step after a missing predecessor.
+			plan.Steps = []Step{}
+			plan.Problem = &stage.Problem{Code: "journal-invalid"}
+			return plan
+		}
+	}
+	if first >= 0 {
+		plan.Steps = slices.Clone(plan.Steps[first:])
+		return plan
+	}
+	plan.Steps = []Step{}
+	plan.Problem = &stage.Problem{Code: "journal-invalid"}
+	return plan
 }
 
 type Step struct {
@@ -66,13 +105,13 @@ func BuildPlan(p profile.Profile, kind string, start Identity) Plan {
 		plan.Steps = append(plan.Steps, Step{ID: id, Action: action, Partition: partition, FileID: fileID, Product: product, Window: window, Critical: critical, Resumable: !critical, Name: profile.Text{"en": en, "zh-CN": zh}})
 	}
 	if start.Mode != profile.ModeFastboot {
-		action := "confirm-linux"
+		id, action := "confirm-linux", "confirm-linux"
 		en, zh := "Confirm the Linux board serial", "确认 Linux 设备序列号"
 		if stock {
-			action = "confirm-stock"
+			id, action = "confirm", "confirm-stock"
 			en, zh = "Confirm the original firmware and serial", "确认原厂固件与序列号"
 		}
-		add("confirm", action, "", "", "", "", en, zh)
+		add(id, action, "", "", "", "", en, zh)
 		add("adb-bootloader", "adb-bootloader", "", "", "", "", "Reboot into fastboot", "重启到 fastboot")
 		product := b.Fastboot.Product
 		if stock {

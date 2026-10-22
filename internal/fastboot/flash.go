@@ -17,6 +17,9 @@ const defaultMaxPiece = int64(200 << 20)
 // of 200 MiB and max-download-size. A positive override is still capped at the device/protocol limit.
 type FlashOptions struct {
 	MaxPiece int64
+	// PartitionSize is the capacity from a verified GPT written in this bootloader session.
+	// A positive value replaces partition-size getvar, which lk1st caches at boot. Zero queries it.
+	PartitionSize int64
 	// BeforeWrite runs before each download and flash, including every sparse piece. It may
 	// inspect discovery state, but must not call this client (Flash owns the protocol lock).
 	BeforeWrite func(context.Context) error
@@ -37,8 +40,8 @@ func (c *Client) Flash(ctx context.Context, partition string, img *Image, opts F
 	if err := validateCommand(cmd); err != nil {
 		return err
 	}
-	if partition == "" || img == nil || opts.MaxPiece < 0 {
-		return &CommandError{Command: cmd, Message: "need a partition, an image and a nonnegative MaxPiece"}
+	if partition == "" || img == nil || opts.MaxPiece < 0 || opts.PartitionSize < 0 {
+		return &CommandError{Command: cmd, Message: "need a partition, an image and nonnegative limits"}
 	}
 	deviceLimit, err := c.maxDownloadSize(ctx)
 	if err != nil {
@@ -58,7 +61,11 @@ func (c *Client) Flash(ctx context.Context, partition string, img *Image, opts F
 		}
 	}
 	// Very long partition names can fit flash: but not the optional getvar command.
-	if validateCommand("getvar:partition-size:"+partition) == nil {
+	if opts.PartitionSize > 0 {
+		if img.Size() > opts.PartitionSize {
+			return &PartitionSizeError{Partition: partition, ImageSize: img.Size(), PartitionSize: opts.PartitionSize}
+		}
+	} else if validateCommand("getvar:partition-size:"+partition) == nil {
 		capacity, err := c.partitionSize(ctx, partition)
 		if err != nil && !partitionUnavailable(err) {
 			return err

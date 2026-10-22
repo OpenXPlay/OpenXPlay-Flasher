@@ -552,6 +552,9 @@ func writeEngineResult(stdout, stderr io.Writer, value any, asJSON bool) int {
 			}
 		}
 	case app.InstallState:
+		if v.ChainNotice != nil {
+			fmt.Fprintln(stdout, v.ChainNotice["en"], "/", v.ChainNotice["zh-CN"])
+		}
 		if v.Identity != nil {
 			fmt.Fprintf(stdout, "Board / 设备: %s (%s)\n", v.Identity.Serial, v.Identity.Mode)
 		}

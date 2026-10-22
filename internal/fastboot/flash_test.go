@@ -55,6 +55,31 @@ func TestFlashStockRawAndCachedLimit(t *testing.T) {
 	}
 }
 
+func TestFlashUsesVerifiedGPTCapacity(t *testing.T) {
+	data := bytes.Repeat([]byte{0x74}, 605312)
+	img := openFixture(t, data)
+	steps := []bulkStep{out("getvar:max-download-size"), in("OKAY0x10000000")}
+	// No partition-size getvar is permitted: this lk1st session would still report 0x80000.
+	steps = append(steps, flashSteps("tz", data)...)
+	c, _ := script(t, steps...)
+	if err := c.Flash(t.Context(), "tz", img, FlashOptions{PartitionSize: 1 << 20}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, sparse := range []bool{false, true} {
+		t.Run(fmt.Sprint(sparse), func(t *testing.T) {
+			image := img
+			if sparse {
+				image = openFixture(t, fixtureSparse(4096, []testChunk{{chunkDontCare, 256, nil}}, false))
+			}
+			c, _ := script(t, out("getvar:max-download-size"), in("OKAY0x10000000"))
+			var size *PartitionSizeError
+			if err := c.Flash(t.Context(), "tz", image, FlashOptions{PartitionSize: image.Size() - 1}, nil); !errors.As(err, &size) || size.ImageSize != image.Size() {
+				t.Fatalf("GPT capacity not enforced: %v", err)
+			}
+		})
+	}
+}
+
 func TestFlashPiecesAndProgress(t *testing.T) {
 	for _, sparse := range []bool{false, true} {
 		t.Run(fmt.Sprint(sparse), func(t *testing.T) {
@@ -186,7 +211,7 @@ func TestFlashPreflight(t *testing.T) {
 		img       *Image
 		opts      FlashOptions
 	}{
-		{"", img, FlashOptions{}}, {"boot", nil, FlashOptions{}}, {"boot", img, FlashOptions{MaxPiece: -1}},
+		{"", img, FlashOptions{}}, {"boot", nil, FlashOptions{}}, {"boot", img, FlashOptions{MaxPiece: -1}}, {"boot", img, FlashOptions{PartitionSize: -1}},
 	} {
 		var command *CommandError
 		if err := c.Flash(t.Context(), tc.partition, tc.img, tc.opts, nil); !errors.As(err, &command) {

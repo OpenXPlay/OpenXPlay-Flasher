@@ -407,7 +407,7 @@ function backupDetails() {
     restoration.source === "previous-job" ? el("p", { class: "restore-source" }, t("Repair will write back the set saved before the interruption: {set}.", { set: restoration.set })) :
       restoration.source === "none" ? el("p", { class: "restore-source" }, t("This choice preserves the modem partitions; no backup is written back.")) :
       el("p", { class: "restore-source" }, t("This choice writes back the fresh backup taken from this dongle during flashing.")),
-    el("p", { class: "note" }, t("A fresh dump is always taken during flashing; changed data is saved as a new backup set.")),
+    el("p", { class: "note" }, view.state?.chainNotice ? t("Repair uses the saved backup set without reading the modem partitions again.") : t("A fresh dump is always taken during flashing; changed data is saved as a new backup set.")),
     el("p", { class: "note" }, t("Keep this backup folder; it belongs to this dongle.")),
   ];
   if (listing?.sets?.length) parts.push(el("button", { type: "button", disabled: view.busy, onclick: async () => {
@@ -496,7 +496,8 @@ function jobView(job) {
       el("progress", { value: p.piece - 1 + sent, max: p.pieces, "aria-label": t("Installation progress") }));
     if (p.estimateSeconds > 0) parts.push(el("p", { class: "note" }, t("Estimated time for this transfer: {seconds} s", { seconds: p.estimateSeconds })));
   }
-  if (job.findings?.backupComparison?.startsWith("different")) parts.push(el("p", { class: "note" }, t("The modem's EFS data changes while Linux runs. This is normal; a new backup set was saved.")));
+  if (job.findings?.backupComparison?.startsWith("larger")) parts.push(el("p", { class: "note" }, t("The modem partitions are larger in the new partition table; the data is unchanged and was saved as a new backup set at the new size.")));
+  else if (job.findings?.backupComparison?.startsWith("different")) parts.push(el("p", { class: "note" }, t("The modem's EFS data changes while Linux runs. This is normal; a new backup set was saved.")));
   if (job.status === "succeeded") {
     parts.push(el("div", { id: "install-result", tabindex: "-1", class: "result ok", role: "status" }, [el("strong", {}, t("Installation succeeded.")),
       el("p", { class: "unplug-status" }, nextStepsState(view.state).relay ? t("Keep it connected for the next step") : t(unplugText(job))), installed(job.installed, !job.observed || view.state.installedStale),
@@ -508,7 +509,7 @@ function jobView(job) {
     parts.push(el("div", { id: "install-result", tabindex: "-1", class: "error-box", role: "alert" }, [el("strong", {}, t("Installation failed.")),
       el("p", { class: "unplug-status" }, t(unplugText(job))),
       step ? el("p", {}, t("Failed step: {layer} — {step}", { layer: name(step.layer), step: stepLabel(step) })) : "",
-      el("p", {}, problemText(t, job.problem)), el("p", {}, job.plan && job.left === "partial" ? t("The system installation is incomplete. Keep the device connected and choose Repair.") : t(LEFT_TEXT[job.left] || LEFT_TEXT.partial)),
+      el("p", {}, problemText(t, job.problem)), el("p", {}, view.state?.chainNotice ? view.state.chainNotice[lang()] || view.state.chainNotice.en : job.plan && job.left === "partial" ? t("The system installation is incomplete. Keep the device connected and choose Repair.") : t(LEFT_TEXT[job.left] || LEFT_TEXT.partial)),
       installed(job.installed, !job.observed || view.state.installedStale),
       job.plan && view.state.resume && !view.state.resume.finished ? el("button", { type: "button", disabled: !canChoose(view.state, "repair"), onclick: selectRepair }, t("Repair")) : "",
       job.retryable ? el("button", { type: "button", disabled: view.busy, onclick: async () => {
@@ -644,6 +645,7 @@ export function render() {
   document.getElementById("install-connect").hidden = step !== 0;
   const renderStep = [connectView, chooseView, prepareView, backupView, flashView, () => view.state?.job ? [jobView(view.state.job)] : []][step];
   const parts = renderStep();
+  if (view.state?.chainNotice) parts.unshift(el("p", { class: "warning critical", role: "status" }, view.state.chainNotice[lang()] || view.state.chainNotice.en));
   if (view.state?.problem) parts.unshift(el("p", { class: "error-box", role: "status" }, problemText(t, view.state.problem)));
   if (view.error) parts.push(el("p", { class: "error-box", role: "alert" }, problemText(t, view.error)));
   root.replaceChildren(...parts);

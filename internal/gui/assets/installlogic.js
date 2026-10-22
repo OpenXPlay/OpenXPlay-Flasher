@@ -33,6 +33,9 @@ export const STATUS_TEXT = {
 };
 
 export const ERROR_TEXT = {
+  "chain-incomplete": "The boot chain was not finished. The dongle is no longer available in the same lk1st fastboot session. Stop here; do not restart the dongle.",
+  "gpt-invalid": "The pinned partition table is invalid: {detail}.",
+  "gpt-capacity": "The new partition table has no fixed capacity for {detail}. Flashing stopped before the next boot-chain write.",
   "base-version": "This base version is not pinned by the device profile: {detail}.",
   "fastboot-unsupported": "Flashing the base system is not available in the Windows version yet; use a Mac, or the manual guide.",
   "base-unconfirmed": "Confirm this board's serial before installing the base system.",

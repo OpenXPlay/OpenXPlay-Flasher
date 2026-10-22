@@ -6,6 +6,10 @@
 // Placeholders are written {name} and filled from t()'s second argument.
 
 export const ZH = {
+  "The boot chain was not finished. The dongle is no longer available in the same lk1st fastboot session. Stop here; do not restart the dongle.": "引导链尚未写完，设备已不在原来的 lk1st fastboot 会话中。请停止操作，不要重启设备。",
+  "The pinned partition table is invalid: {detail}.": "固定版本的分区表无效：{detail}。",
+  "The new partition table has no fixed capacity for {detail}. Flashing stopped before the next boot-chain write.": "新分区表未指定 {detail} 的固定容量，已在继续写入引导链前停止。",
+  "Repair uses the saved backup set without reading the modem partitions again.": "修复将使用已保存的备份集，不会重新读取调制解调器分区。",
   "Remove": "移除",
   "Serial {serial}": "序列号 {serial}",
   "Phicomm N1": "斐讯 N1",
@@ -378,6 +382,7 @@ export const ZH = {
   "Writing {piece}/{pieces}": "正在写入第 {piece}/{pieces} 片",
   "Estimated time for this transfer: {seconds} s": "本次传输预计还需 {seconds} 秒",
   "The modem's EFS data changes while Linux runs. This is normal; a new backup set was saved.": "Linux 运行期间，调制解调器的 EFS 数据会发生正常变化；已另存为新的备份集。",
+  "The modem partitions are larger in the new partition table; the data is unchanged and was saved as a new backup set at the new size.": "新分区表中的调制解调器分区容量更大，数据没有变化；已按新的分区大小另存为备份集。",
   "Base system findings": "基础系统检查结果",
   "Kernel": "内核",
   "Debian": "Debian",

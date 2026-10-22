@@ -56,6 +56,7 @@ type CaptureResult struct {
 	Backup
 	PreviousSet     string
 	MatchedPrevious bool
+	GrownOnly       bool
 	Differing       []string
 	ComparisonError bool
 }
@@ -307,6 +308,43 @@ func partitionHash(ctx context.Context, path string, size, prefix int64) (sum, h
 
 type Dump func(context.Context, string, io.Writer) error
 
+// zeroExtended compares the fresh hash with the stored bytes followed by zeroes. This proves
+// both an identical prefix and an empty extension without loading a whole dump into memory.
+func zeroExtended(ctx context.Context, path string, old, fresh Partition) (bool, error) {
+	if old.Size <= 0 || fresh.Size <= old.Size {
+		return false, nil
+	}
+	f, err := regular(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+	if st.Size() != old.Size {
+		return false, &stage.Problem{Code: "backup-size", Detail: filepath.Base(path)}
+	}
+	h := sha256.New()
+	if _, err = io.Copy(h, contextReader{ctx, f}); err != nil {
+		return false, err
+	}
+	if hex.EncodeToString(h.Sum(nil)) != old.SHA256 {
+		return false, &stage.Problem{Code: "backup-checksum", Detail: filepath.Base(path)}
+	}
+	zeroes := make([]byte, 32<<10)
+	for remaining := fresh.Size - old.Size; remaining > 0; {
+		if err = ctx.Err(); err != nil {
+			return false, err
+		}
+		n := min(remaining, int64(len(zeroes)))
+		h.Write(zeroes[:n])
+		remaining -= n
+	}
+	return hex.EncodeToString(h.Sum(nil)) == fresh.SHA256, nil
+}
+
 // Capture writes each file once to a private staging directory, syncs it, then reads it back.
 // A changed board dump becomes a new immutable set; an import always gets its own set.
 func (s *Store) Capture(ctx context.Context, serial, source string, dump Dump) (result CaptureResult, err error) {
@@ -375,12 +413,19 @@ func (s *Store) Capture(ctx context.Context, serial, source string, dump Dump) (
 	if listErr == nil && len(sets) > 0 {
 		old := sets[0]
 		result.PreviousSet = old.Set
+		grownOnly := true
+		oldDir, _ := s.setPath(serial, old.Set)
 		for _, name := range partitionNames {
-			if old.Partitions[name].SHA256 != b.Partitions[name].SHA256 {
+			previous, fresh := old.Partitions[name], b.Partitions[name]
+			if previous.Size != fresh.Size || previous.SHA256 != fresh.SHA256 {
 				result.Differing = append(result.Differing, name)
+				grown, err := zeroExtended(ctx, filepath.Join(oldDir, name+".bin"), previous, fresh)
+				result.ComparisonError = result.ComparisonError || err != nil
+				grownOnly = grownOnly && grown && err == nil
 			}
 		}
 		result.MatchedPrevious = len(result.Differing) == 0
+		result.GrownOnly = !result.MatchedPrevious && grownOnly && !result.ComparisonError
 		if result.MatchedPrevious && source != "imported" {
 			if _, err := s.Validate(ctx, serial, old.Set); err == nil {
 				result.Backup = old

@@ -6,7 +6,9 @@ package base
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,11 +17,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/catalog"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
 )
 
 func priorJob(t *testing.T, f fixture, captured, inFlight string, completed []string) Journal {
 	t.Helper()
+	// Execution journals contain a completed prefix, even when a test names only its last step.
+	plan := BuildPlan(f.p, "repair", Identity{Mode: profile.ModeFastboot, Product: f.p.Base.Fastboot.Product, Serial: "board1"})
+	last := -1
+	for i, s := range plan.Steps {
+		if s.Window == "chain" && slices.Contains(completed, s.ID) {
+			last = max(last, i)
+		}
+		if s.Window == "chain" && s.ID == inFlight {
+			last = max(last, i-1)
+		}
+	}
+	for i, s := range plan.Steps {
+		if i <= last && s.Window == "chain" && !slices.Contains(completed, s.ID) {
+			completed = append(completed, s.ID)
+		}
+	}
 	started := time.Now().Add(-time.Hour).UTC()
 	j := Journal{Schema: JournalSchema, Profile: f.p.ID, Serial: "board1", Plan: "stock", Choice: "stock", Started: started, Updated: started, CapturedSet: captured, InFlight: inFlight, Completed: completed}
 	if err := f.journals.Save(t.Context(), j); err != nil {
@@ -71,6 +90,76 @@ func TestCaptureVersionedSets(t *testing.T) {
 			after, err := os.ReadFile(filepath.Join(dir, "backup.json"))
 			if err != nil || !bytes.Equal(manifest, after) {
 				t.Fatal("rewrote the older manifest", err)
+			}
+		})
+	}
+}
+
+func TestCaptureDistinguishesPartitionGrowthFromContentChanges(t *testing.T) {
+	for _, change := range []string{"zero extension", "changed prefix", "nonzero tail", "changed unresized partition"} {
+		t.Run(change, func(t *testing.T) {
+			f := makeFixture(t)
+			const oldSize, newSize = 1536 << 10, 2 << 20
+			modem := []string{"fsg", "modemst1", "modemst2"}
+			for i, name := range modem {
+				f.p.Base.Protected[name] = []int64{oldSize, newSize}
+				f.dumps[name] = bytes.Repeat([]byte{byte(91 + i)}, oldSize)
+			}
+			first := f.capture(t, "board1")
+			for _, name := range modem {
+				f.dumps[name] = append(f.dumps[name], make([]byte, newSize-oldSize)...)
+			}
+			switch change {
+			case "changed prefix":
+				f.dumps["modemst1"][0]++
+			case "nonzero tail":
+				f.dumps["modemst1"][newSize-1] = 1
+			case "changed unresized partition":
+				f.dumps["fsg"] = f.dumps["fsg"][:oldSize]
+				f.dumps["fsg"][0]++
+			}
+			captured, err := f.store.Capture(t.Context(), "board1", "oem-dump", func(_ context.Context, name string, w io.Writer) error {
+				_, err := w.Write(f.dumps[name])
+				return err
+			})
+			if err != nil || captured.Set == first.Set || captured.PreviousSet != first.Set || captured.MatchedPrevious || captured.ComparisonError || captured.GrownOnly != (change == "zero extension") || !slices.Equal(captured.Differing, modem) {
+				t.Fatalf("capture=%+v err=%v", captured, err)
+			}
+			sets, err := f.store.Sets(t.Context(), "board1")
+			if err != nil || len(sets) != 2 || sets[0].Set != captured.Set {
+				t.Fatalf("sets=%+v err=%v", sets, err)
+			}
+			kept, err := f.store.Validate(t.Context(), "board1", first.Set)
+			if err != nil || !reflect.DeepEqual(kept, first) {
+				t.Fatalf("changed original set: %+v err=%v", kept, err)
+			}
+			for _, name := range modem {
+				part := captured.Partitions[name]
+				if part.Size != int64(len(f.dumps[name])) || part.SHA256 != hash(f.dumps[name]) {
+					t.Fatalf("new size or data not saved for %s: %+v", name, part)
+				}
+			}
+		})
+	}
+}
+
+func TestBackupFindingsDistinguishGrowthFromEFSChanges(t *testing.T) {
+	for _, contentChanged := range []bool{false, true} {
+		t.Run(map[bool]string{false: "larger partitions", true: "changed EFS"}[contentChanged], func(t *testing.T) {
+			e, plan, fb, _ := executorFixture(t, "system", profile.ModeFastboot, "LK1ST_MSM8916")
+			first := fb.f.capture(t, "board1")
+			for _, name := range []string{"fsg", "modemst1", "modemst2"} {
+				e.Profile.Base.Protected[name] = []int64{64, 96}
+				fb.f.dumps[name] = append(fb.f.dumps[name], make([]byte, 32)...)
+			}
+			want := "larger / 分区增大，数据未变"
+			if contentChanged {
+				fb.f.dumps["modemst1"][0]++
+				want = "different / 不同"
+			}
+			job := e.Run(t.Context(), plan)
+			if job.Status != "succeeded" || job.Findings["backupComparison"] != want || job.Findings["backupPreviousSet"] != first.Set || e.Journal.CapturedSet == first.Set {
+				t.Fatalf("job=%+v journal=%+v", job, e.Journal)
 			}
 		})
 	}
@@ -135,13 +224,26 @@ func TestRestoreSourceByPlan(t *testing.T) {
 					fb.expectRestores[name] = Partition{Size: int64(len(data)), SHA256: hash(data)}
 				}
 			}
+			if tc.kind == "repair" {
+				source, err := e.Journals.RepairSource(t.Context(), e.Profile.ID, plan.Serial)
+				if err != nil {
+					t.Fatal(err)
+				}
+				plan = BuildRepairPlan(e.Profile, plan.Start, source)
+			}
 			job := e.Run(t.Context(), plan)
+			if tc.kind != "repair" && (tc.inFlight != "" || tc.completed != "") {
+				if job.Problem == nil || job.Problem.Code != "chain-incomplete" || len(fb.calls) != 0 {
+					t.Fatalf("another plan restarted an incomplete chain: %+v %v", job, fb.calls)
+				}
+				return
+			}
 			if job.Status != "succeeded" {
 				t.Fatalf("problem=%v calls=%v", job.Problem, fb.calls)
 			}
-			if tc.invalid != "" {
-				if e.Journal.CapturedSet != "" || job.Findings["backupFreshProblem"] == "" {
-					t.Fatal("invalid capture should only be a finding", e.Journal, job.Findings)
+			if tc.old {
+				if e.Journal.CapturedSet != first.Set || slices.Contains(fb.calls, "oem dump fsc") {
+					t.Fatal("continuation read a fresh backup", e.Journal, fb.calls)
 				}
 			} else if e.Journal.CapturedSet == first.Set || job.Findings["backupDiffering"] != "modemst1, modemst2" {
 				t.Fatal("fresh capture was not recorded", e.Journal, job.Findings)
@@ -154,8 +256,16 @@ func TestRestoreSourceByPlan(t *testing.T) {
 				if e.Journal.RestoreSet != "" || len(fb.restored) != 0 || slices.Contains(fb.calls, "flash:partition") {
 					t.Fatal("system restored or rebuilt the chain", fb.calls)
 				}
-			} else if e.Journal.RestoreSet != want || !slices.Equal(fb.restored, partitionNames) {
-				t.Fatalf("restore set=%s want=%s restored=%v", e.Journal.RestoreSet, want, fb.restored)
+			} else {
+				restores := []string{}
+				for _, step := range plan.Steps {
+					if step.Action == "restore" {
+						restores = append(restores, step.Partition)
+					}
+				}
+				if e.Journal.RestoreSet != want || !slices.Equal(fb.restored, restores) {
+					t.Fatalf("restore set=%s want=%s restored=%v", e.Journal.RestoreSet, want, fb.restored)
+				}
 			}
 		})
 	}
@@ -184,7 +294,8 @@ func TestNeededSetStopsBeforeChain(t *testing.T) {
 		t.Run(damage, func(t *testing.T) {
 			e, plan, fb, _ := executorFixture(t, "repair", profile.ModeFastboot, "LK1ST_MSM8916")
 			first := fb.f.capture(t, "board1")
-			priorJob(t, fb.f, first.Set, "chain-rpm", nil)
+			previous := priorJob(t, fb.f, first.Set, "chain-rpm", nil)
+			plan = BuildRepairPlan(e.Profile, plan.Start, &previous)
 			dir, _ := e.Store.setPath("board1", first.Set)
 			corrupt := func() { put(t, filepath.Join(dir, "modemst1.bin"), bytes.Repeat([]byte{7}, 64)) }
 			switch damage {
@@ -201,11 +312,7 @@ func TestNeededSetStopsBeforeChain(t *testing.T) {
 			case "metadata":
 				put(t, filepath.Join(dir, "backup.json"), []byte("{}"))
 			case "after capture":
-				fb.onWrite = func(cmd string) {
-					if cmd == "erase:boot" {
-						corrupt()
-					}
-				}
+				e.Files.Progress = func(_, _ string, _ catalog.Progress) { corrupt() }
 			}
 			fb.f.dumps["modemst2"][0]++
 			job := e.Run(t.Context(), plan)
@@ -213,7 +320,7 @@ func TestNeededSetStopsBeforeChain(t *testing.T) {
 				t.Fatalf("problem=%v calls=%v", job.Problem, fb.calls)
 			}
 			latest, err := e.Journals.Load(t.Context(), e.Profile.ID, plan.Serial)
-			if err != nil || latest.RestoreSet != first.Set || (latest.CapturedSet != "") != (damage == "after capture") {
+			if err != nil || latest.RestoreSet != first.Set || latest.CapturedSet != first.Set {
 				t.Fatal("lost the selected source or a completed capture", latest, err)
 			}
 		})
@@ -233,13 +340,13 @@ func TestRepairRetriesKeepOriginalSetAndJournalHistory(t *testing.T) {
 	}
 	fb.expectRestores = safe.Partitions
 	fb.f.dumps["modemst1"][0]++
-	plan = BuildPlan(e.Profile, "repair", Identity{Mode: profile.ModeFastboot, Product: "LK1ST_MSM8916", Serial: "board1"})
+	plan = BuildRepairPlan(e.Profile, Identity{Mode: profile.ModeFastboot, Product: "LK1ST_MSM8916", Serial: "board1"}, &first)
 	if job := e.Run(t.Context(), plan); job.Uncertain != "chain-rpm" {
 		t.Fatal("second job did not stop in the chain", job.Problem)
 	}
 	second := *e.Journal
-	if second.CapturedSet == first.CapturedSet || second.RestoreSet != first.CapturedSet {
-		t.Fatal("repair did not retain both sources", second)
+	if second.CapturedSet != first.CapturedSet || second.RestoreSet != first.CapturedSet {
+		t.Fatal("repair did not retain the original source", second)
 	}
 	fb.fail = ""
 	fb.f.dumps["modemst1"] = make([]byte, 64)
@@ -250,7 +357,7 @@ func TestRepairRetriesKeepOriginalSetAndJournalHistory(t *testing.T) {
 	if err != nil || len(history) != 3 || !reflect.DeepEqual(history[2], first) || !reflect.DeepEqual(history[1], second) {
 		t.Fatalf("history=%+v err=%v", history, err)
 	}
-	if history[0].RestoreSet != first.CapturedSet || history[0].CapturedSet != "" || !history[0].Finished {
+	if history[0].RestoreSet != first.CapturedSet || history[0].CapturedSet != first.CapturedSet || !history[0].Finished {
 		t.Fatal("repeated repair selected its invalid capture", history[0])
 	}
 	entries, err := os.ReadDir(filepath.Join(e.Journals.Dir, "jobs", e.Profile.ID+"-board1"))
@@ -292,6 +399,7 @@ func TestLegacyBackupAndJournalRemainInPlace(t *testing.T) {
 	}
 	journalPath := filepath.Join(f.journals.Dir, "jobs", f.p.ID+"-board1.json")
 	put(t, journalPath, journalData)
+	plan = BuildRepairPlan(e.Profile, plan.Start, &j)
 	fb.expectRestores = b.Partitions
 	f.dumps["modemst2"][0]++
 	job := e.Run(t.Context(), plan)
@@ -299,7 +407,7 @@ func TestLegacyBackupAndJournalRemainInPlace(t *testing.T) {
 		t.Fatal("repair did not read legacy backup and journal", job.Problem, e.Journal)
 	}
 	sets, err := f.store.Sets(t.Context(), "board1")
-	if err != nil || len(sets) != 2 || sets[1].Set != "legacy" {
+	if err != nil || len(sets) != 1 || sets[0].Set != "legacy" {
 		t.Fatal("legacy listing", sets, err)
 	}
 	after, err := os.ReadFile(filepath.Join(dir, "backup.json"))

@@ -233,9 +233,25 @@ func (s *Service) loadJournal(ctx context.Context, p profile.Profile, serial str
 		return nil
 	}
 	j, err := (base.Journals{Dir: dir}).Load(ctx, p.ID, serial)
+	if err == nil {
+		var source *base.Journal
+		source, err = (base.Journals{Dir: dir}).RepairSource(ctx, p.ID, serial)
+		if base.IncompleteChain(source) {
+			j = source
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.unfinished = j
+	if err == nil && base.IncompleteChain(j) {
+		identity := base.Identity{}
+		if s.baseIdentity != nil {
+			identity = *s.baseIdentity
+		}
+		if problem := s.basePlanLocked(p, "repair", identity).Problem; problem != nil {
+			err = problem
+		}
+	}
 	if err != nil {
 		s.installProblem = installProblem(err)
 	}
@@ -311,6 +327,10 @@ func (s *Service) inspectBaseTarget(ctx context.Context) (bool, profile.Profile,
 	}
 	if err != nil {
 		s.mu.Lock()
+		if base.IncompleteChain(s.unfinished) {
+			err = &stage.Problem{Code: "chain-incomplete"}
+			s.baseIdentity = nil
+		}
 		s.installProblem = installProblem(err)
 		s.installStale = s.installed != nil
 		// Even an unsupported transfer backend can describe choices for a USB-matched profile.

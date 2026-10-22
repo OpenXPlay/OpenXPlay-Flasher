@@ -33,6 +33,7 @@ import (
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/fastboot"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/profile"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/testgpt"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 )
 
@@ -208,6 +209,9 @@ type baseTestFB struct {
 	det                   *baseTestDetector
 	product, serial, dump string
 	calls                 []string
+	fail                  string
+	expectRestores        map[string]base.Partition
+	restored              []string
 }
 
 func (f *baseTestFB) GetVar(_ context.Context, name string) (string, error) {
@@ -219,16 +223,25 @@ func (f *baseTestFB) GetVar(_ context.Context, name string) (string, error) {
 	}
 	return "", nil
 }
-func (f *baseTestFB) Flash(ctx context.Context, name string, _ *fastboot.Image, opts fastboot.FlashOptions, _ fastboot.Progress) error {
+func (f *baseTestFB) Flash(ctx context.Context, name string, img *fastboot.Image, opts fastboot.FlashOptions, _ fastboot.Progress) error {
 	if opts.BeforeWrite != nil {
 		if err := opts.BeforeWrite(ctx); err != nil {
 			return err
 		}
 	}
+	if pin, ok := f.expectRestores[name]; ok {
+		if err := img.Verify(ctx, pin.Size, pin.SHA256); err != nil {
+			return err
+		}
+		f.restored = append(f.restored, name)
+	}
 	if name == "boot" {
 		f.boot = true
 	}
 	f.calls = append(f.calls, "flash:"+name)
+	if name == f.fail {
+		return errors.New("injected flash failure")
+	}
 	return nil
 }
 func (f *baseTestFB) Erase(_ context.Context, name string) error {
@@ -292,6 +305,9 @@ func baseServiceFixture(t *testing.T) (*Service, *baseTestDevice, *baseTestFB, *
 	payloads := map[string][]byte{}
 	for id, pin := range b.Files {
 		data := []byte("small-image-" + id)
+		if id == "gpt" {
+			data = testgpt.Base()
+		}
 		pin.Size = int64(len(data))
 		pin.SHA256 = testHash(data)
 		b.Files[id] = pin

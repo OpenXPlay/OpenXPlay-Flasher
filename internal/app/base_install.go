@@ -7,6 +7,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -54,6 +55,37 @@ func baseName(id string) profile.Text {
 	return nil
 }
 
+func (s *Service) basePlanLocked(p profile.Profile, kind string, identity base.Identity) base.Plan {
+	if kind == "repair" {
+		plan := base.BuildRepairPlan(p, identity, s.unfinished)
+		if base.IncompleteChain(s.unfinished) && (s.installTarget == nil || !s.unfinished.SameChainConnection(s.installTarget.Device.USB)) {
+			plan.Problem = &stage.Problem{Code: "chain-incomplete"}
+			plan.Steps = []base.Step{}
+		}
+		return plan
+	}
+	plan := base.BuildPlan(p, kind, identity)
+	if base.IncompleteChain(s.unfinished) {
+		plan.Problem = &stage.Problem{Code: "chain-incomplete"}
+		plan.Steps = []base.Step{}
+	}
+	return plan
+}
+
+func chainNotice(plan base.Plan) profile.Text {
+	if plan.Problem != nil || len(plan.Steps) == 0 {
+		return profile.Text{
+			"en":    "The boot chain was not finished. The dongle is no longer available in the same lk1st fastboot session. Stop here; do not restart the dongle.",
+			"zh-CN": "引导链尚未写完，设备已不在原来的 lk1st fastboot 会话中。请停止操作，不要重启设备。",
+		}
+	}
+	step := plan.Steps[0].ID
+	return profile.Text{
+		"en":    fmt.Sprintf("The boot chain was not finished. Keep the dongle connected; Repair continues from %s without restarting it.", step),
+		"zh-CN": fmt.Sprintf("引导链尚未写完。请保持设备连接；修复将从 %s 继续，不会先重启设备。", step),
+	}
+}
+
 func (s *Service) extendBaseChoicesLocked(state *InstallState, p profile.Profile) {
 	// Add artifact provenance to the existing adb needs without changing their planning rules.
 	for i := range state.Choices {
@@ -80,16 +112,31 @@ func (s *Service) extendBaseChoicesLocked(state *InstallState, p profile.Profile
 	if s.baseIdentity != nil && s.baseIdentity.Mode == profile.ModeFastboot || base.ResumeChoice(s.unfinished) != "" {
 		ids = append(ids, "repair")
 	}
+	incomplete := base.IncompleteChain(s.unfinished)
+	if incomplete {
+		state.Choices = []stage.Choice{}
+		ids = []string{"repair"}
+		state.Suggested = "repair"
+	}
 	for _, id := range ids {
 		c := stage.Choice{BasePlan: baseKind(id), ID: id, Name: baseName(id), Destructive: true, BackupRequired: true, Layers: choiceNeeds(id), Needs: []stage.PackageNeed{}, Steps: []stage.Step{}}
+		if incomplete {
+			original := s.unfinished.Choice
+			if original == "" {
+				original = s.unfinished.Plan
+			}
+			if original == "stock" || original == "full-reinstall" {
+				c.Layers = choiceNeeds(original)
+			}
+		}
 		identity := base.Identity{Mode: profile.ModeADB, Serial: "unknown"}
 		if s.baseIdentity != nil {
 			identity = *s.baseIdentity
 			c.Serial = identity.Serial
 		}
-		plan := base.BuildPlan(p, baseKind(id), identity)
+		plan := s.basePlanLocked(p, baseKind(id), identity)
 		c.Steps = base.Steps(plan)
-		if len(c.Steps) == 0 {
+		if len(c.Steps) == 0 && !incomplete {
 			// An unavailable choice still explains its scope and steps in the existing page.
 			preview := identity
 			if id == "stock" {
@@ -100,11 +147,14 @@ func (s *Service) extendBaseChoicesLocked(state *InstallState, p profile.Profile
 			preview.Product = ""
 			c.Steps = base.Steps(base.BuildPlan(p, baseKind(id), preview))
 		}
-		if len(c.Layers) > 1 {
+		if len(c.Layers) > 1 && (!incomplete || plan.Problem == nil) {
 			f := stage.Facts{Layers: map[string]string{"base": p.Base.Release}}
 			c.Steps = append(c.Steps, stage.DescribeChoice(p, f, stage.ChoiceDefinition{ID: "full", Layers: []string{"device", "relay"}, Needs: []string{"device", "relay"}}).Steps...)
 		}
 		switch {
+		case incomplete && plan.Problem != nil:
+			c.Problem = plan.Problem
+			state.Problem = plan.Problem
 		case !s.fastbootSupported:
 			c.Problem = &stage.Problem{Code: "fastboot-unsupported"}
 			c.Reason = profile.Text{"en": "Flashing the base system is not available in the Windows version yet; use a Mac, or the manual guide.", "zh-CN": "Windows 版暂不支持刷写基础系统，请使用 Mac，或按照手动安装指南操作。"}
@@ -116,6 +166,10 @@ func (s *Service) extendBaseChoicesLocked(state *InstallState, p profile.Profile
 			c.Reason = profile.Text{"en": "This plan does not apply to the connected device's current mode.", "zh-CN": "此方案不适用于已连接设备的当前模式。"}
 		case state.Problem != nil:
 			c.Problem = state.Problem
+		}
+		if incomplete {
+			state.ChainNotice = chainNotice(plan)
+			c.Reason = state.ChainNotice
 		}
 		c.Ready = c.Problem == nil
 		for _, layer := range c.Layers {
@@ -318,7 +372,7 @@ func (s *Service) startBase(ctx context.Context, req stage.Request) (InstallStat
 		return state, &stage.Problem{Code: "storage-unavailable"}
 	}
 	start := *identity
-	plan := base.BuildPlan(p, selected.BasePlan, start)
+	plan := s.basePlanLocked(p, selected.BasePlan, start)
 	if plan.Problem != nil {
 		s.mu.Unlock()
 		return state, plan.Problem
@@ -390,11 +444,15 @@ func (s *Service) startBase(ctx context.Context, req stage.Request) (InstallStat
 			s.recordLinuxTarget(jobCtx, p, start.Serial)
 		}
 		s.mu.Lock()
-		s.unfinished = executor.Journal
+		if executor.Journal != nil {
+			s.unfinished = executor.Journal
+		}
 		s.mu.Unlock()
 		s.updateInstallJob(job)
-		if job.Status == "succeeded" {
-			_, _ = s.inspectInstall(jobCtx, "")
+		if job.Status == "succeeded" || base.IncompleteChain(executor.Journal) {
+			readCtx, readCancel := context.WithTimeout(context.WithoutCancel(jobCtx), 20*time.Second)
+			_, _ = s.inspectInstall(readCtx, "")
+			readCancel()
 			s.emitInstall()
 		}
 	}()
@@ -702,7 +760,7 @@ func (s *Service) baseVariantLocked(p profile.Profile, c stage.Choice, kind stri
 	if s.baseIdentity == nil {
 		return c, &stage.Problem{Code: "base-unconfirmed"}
 	}
-	plan := base.BuildPlan(p, kind, *s.baseIdentity)
+	plan := s.basePlanLocked(p, kind, *s.baseIdentity)
 	if plan.Problem != nil {
 		return c, plan.Problem
 	}
