@@ -73,7 +73,6 @@ func sshRoutes(mux *http.ServeMux, d Deps) {
 	})
 	mux.HandleFunc("POST /api/ssh/connect", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
-			Mode       string `json:"mode"`
 			Host       string `json:"host"`
 			Port       int    `json:"port"`
 			User       string `json:"user"`
@@ -87,7 +86,7 @@ func sshRoutes(mux *http.ServeMux, d Deps) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
-		state, err := d.Service.SSHConnect(ctx, in.Mode, sshdev.Options{Host: in.Host, Port: in.Port, User: in.User, Password: in.Password, KeyFile: in.KeyFile, Passphrase: in.Passphrase, AcceptHostKey: in.Accept})
+		state, err := d.Service.SSHConnect(ctx, sshdev.Options{Host: in.Host, Port: in.Port, User: in.User, Password: in.Password, KeyFile: in.KeyFile, Passphrase: in.Passphrase, AcceptHostKey: in.Accept})
 		in.Password, in.Passphrase = "", ""
 		if err != nil {
 			if !writeSSHError(w, err) {
@@ -97,7 +96,7 @@ func sshRoutes(mux *http.ServeMux, d Deps) {
 		}
 		c := state.Target.Device
 		// Merge under the store lock so a simultaneous language change does not lose preferences.
-		if err = d.Settings.RememberHost(RecentHost{Host: c.Host, Port: c.Port, User: in.User, Mode: in.Mode}); err != nil {
+		if err = d.Settings.RememberHost(RecentHost{Host: c.Host, Port: c.Port, User: in.User, Mode: "network"}); err != nil {
 			writeError(w, http.StatusInternalServerError, "settings_write", err.Error())
 			return
 		}

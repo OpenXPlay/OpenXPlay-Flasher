@@ -24,7 +24,7 @@ import (
 	"strconv"
 )
 
-// Mode is a USB transport or an explicitly designated stock adb state.
+// Mode is a device transport or an explicitly designated stock adb state.
 type Mode string
 
 const (
@@ -203,15 +203,11 @@ func (p Profile) Validate() error {
 		if p.Base != nil || p.Confirmation == nil || p.Confirmation.DeviceTreeModel == "" || p.Confirmation.DebianVersion == "" || p.Confirmation.Architecture != "arm64" {
 			return fmt.Errorf("SSH profiles require model, Debian version and arm64 confirmation, without a flashable base")
 		}
-		modes := map[string]bool{}
-		for _, c := range p.Connections {
-			if modes[c.ID] || c.ID != "usb" && c.ID != "network" || c.Port < 1 || c.Port > 65535 || c.ID == "usb" && c.Host == "" || c.ID == "network" && c.Host != "" {
-				return fmt.Errorf("invalid SSH connection mode")
-			}
-			modes[c.ID] = true
+		if len(p.Connections) != 1 || p.Connections[0].ID != "network" || p.Connections[0].Host != "" || p.Connections[0].Port < 1 || p.Connections[0].Port > 65535 {
+			return fmt.Errorf("SSH profiles require one network connection with a user-supplied host and a valid port")
 		}
-		if !modes["usb"] || !modes["network"] {
-			return fmt.Errorf("SSH profiles require USB and network connection modes")
+		if len(p.USB) != 0 {
+			return fmt.Errorf("SSH profiles cannot have USB signatures")
 		}
 	}
 	if p.ID == "" || p.Family == "" {
@@ -220,15 +216,12 @@ func (p Profile) Validate() error {
 	if err := p.Name.validate("name"); err != nil {
 		return err
 	}
-	if len(p.USB) == 0 {
+	if p.Transport != ModeSSH && len(p.USB) == 0 {
 		return fmt.Errorf("profile %s: no USB signatures", p.ID)
 	}
 	for _, m := range p.USB {
-		if !validMode(m.Mode) {
+		if !validMode(m.Mode) || m.Mode == ModeSSH {
 			return fmt.Errorf("profile %s: unknown USB mode %q", p.ID, m.Mode)
-		}
-		if m.Mode == ModeSSH && (p.Transport != ModeSSH || m.Interface == nil || m.Interface.Class != 2 || m.Interface.SubClass != 13 || m.Interface.Protocol != 0) {
-			return fmt.Errorf("SSH USB signature requires CDC-NCM")
 		}
 		if _, _, err := m.IDs(); err != nil {
 			return fmt.Errorf("profile %s: %w", p.ID, err)

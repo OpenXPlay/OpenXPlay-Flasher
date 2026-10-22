@@ -8,11 +8,6 @@
   "transport": "ssh",
   "connections": [
     {
-      "id": "usb",
-      "host": "192.168.201.1",
-      "port": 22
-    },
-    {
       "id": "network",
       "port": 22
     }
@@ -22,18 +17,6 @@
     "debianVersion": "13",
     "architecture": "arm64"
   },
-  "usb": [
-    {
-      "mode": "ssh",
-      "vendorId": "1d6b",
-      "productId": "0104",
-      "interface": {
-        "class": 2,
-        "subClass": 13,
-        "protocol": 0
-      }
-    }
-  ],
   "layers": [
     {
       "id": "base",

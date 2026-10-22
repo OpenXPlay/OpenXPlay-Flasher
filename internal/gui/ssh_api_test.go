@@ -7,9 +7,6 @@ package gui
 import (
 	"context"
 	"encoding/json"
-	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
-	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/catalog"
-	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 	"io"
 	"net"
 	"os"
@@ -18,6 +15,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/testssh"
 )
 
@@ -33,7 +31,7 @@ func TestSSHConnectionAPIAndSecrets(t *testing.T) {
 			t.Fatal(rec.Code, rec.Body)
 		}
 	}
-	body := map[string]any{"mode": "network", "host": host, "port": port, "user": "riko", "password": "api-memory-only"}
+	body := map[string]any{"host": host, "port": port, "user": "riko", "password": "api-memory-only"}
 	rec := f.do("POST", "/api/ssh/connect", jsonBody(body))
 	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "ssh-host-unknown") || !strings.Contains(rec.Body.String(), board.Server.Fingerprint()) || !strings.Contains(rec.Body.String(), `"keyType":"ssh-ed25519"`) {
 		t.Fatal(rec.Code, rec.Body)
@@ -42,6 +40,10 @@ func TestSSHConnectionAPIAndSecrets(t *testing.T) {
 	rec = f.do("POST", "/api/ssh/connect", jsonBody(body))
 	if rec.Code != 200 {
 		t.Fatal(rec.Code, rec.Body)
+	}
+	var connected app.InstallState
+	if err := json.Unmarshal(rec.Body.Bytes(), &connected); err != nil || connected.Target == nil || connected.Target.Device.Connection != "network" || connected.Target.Device.Host != host || connected.Target.Device.Port != port || connected.Target.Device.Serialno != "021122334455" {
+		t.Fatal("network identity missing", err, rec.Body)
 	}
 	if strings.Contains(rec.Body.String(), "api-memory-only") || strings.Contains(svc.InstallLog(), "api-memory-only") {
 		t.Fatal("secret in state or session log")
@@ -82,51 +84,16 @@ func TestSSHConnectionAPIAndSecrets(t *testing.T) {
 		t.Fatal("settings accepted a password")
 	}
 	var saved Settings
-	if json.Unmarshal(data, &saved) != nil || len(saved.RecentHosts) != 1 {
+	if json.Unmarshal(data, &saved) != nil || len(saved.RecentHosts) != 1 || saved.RecentHosts[0] != (RecentHost{Host: host, Port: port, User: "riko", Mode: "network"}) {
 		t.Fatal("recent host missing")
 	}
 }
 
-// usbLoopback preserves the logical host for host-key verification while routing only to the
-// fixture server. It never opens the real USB management address.
-type usbLoopback struct {
-	address string
-	t       *testing.T
-}
-
-func (d usbLoopback) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	if address != "192.168.201.1:22" {
-		d.t.Errorf("USB form did not fix its host: %s", address)
-	}
-	return (&net.Dialer{}).DialContext(ctx, network, d.address)
-}
-func TestSSHUSBConnectionAPI(t *testing.T) {
-	board := testssh.NewN1(t, "usb-password-only-in-memory")
-	bus := usb.NewFakeBus(usb.DeviceInfo{VendorID: 0x1d6b, ProductID: 0x0104, Bus: 1, Path: []int{2}, Serial: "021122334455", Interfaces: []usb.Interface{{Class: 2, SubClass: 13}}})
-	hub := NewHub()
-	svc, err := app.NewForBus(bus, hub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	source := catalog.NewSource(dir, "test", nil)
-	source.BaseURLs = nil
-	svc.ConfigureStorage(dir, filepath.Join(dir, "cache"), filepath.Join(dir, "backups"), source)
-	svc.SetSSHDialer(usbLoopback{address: board.Server.Listener.Addr().String(), t: t})
-	store := NewSettingsStore(dir)
-	f := fixture{handler: Handler(Deps{Service: svc, Hub: hub, Settings: store, Native: &fakeNative{}, Web: true})}
-	body := map[string]any{"mode": "usb", "host": "ignored.invalid", "port": 1234, "user": "riko", "password": "usb-password-only-in-memory", "acceptHostKey": board.Server.Fingerprint()}
-	rec := f.do("POST", "/api/ssh/connect", jsonBody(body))
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"host":"192.168.201.1"`) {
+func TestSSHConnectionHasNoModeChoice(t *testing.T) {
+	f := newFixture(t)
+	rec := f.do("POST", "/api/ssh/connect", `{"mode":"other","host":"fake.invalid","user":"riko","password":"never-log-this"}`)
+	if rec.Code != 400 || errorCode(t, rec.Body.Bytes()) != "bad_request" || strings.Contains(rec.Body.String(), "never-log-this") {
 		t.Fatal(rec.Code, rec.Body)
-	}
-	rec = f.do("POST", "/api/config/read", `{"path":"/var/lib/openxplay/settings.json"}`)
-	if rec.Code != 200 {
-		t.Fatal(rec.Code, rec.Body)
-	}
-	data, _ := os.ReadFile(store.path)
-	if strings.Contains(string(data), "usb-password-only-in-memory") {
-		t.Fatal("USB password persisted")
 	}
 }
 
@@ -149,21 +116,18 @@ func TestSSHConnectionErrorCodes(t *testing.T) {
 		{"ssh-no-greeting", io.EOF},
 	} {
 		svc.SetSSHDialer(failingSSHDialer{tc.err})
-		rec := f.do("POST", "/api/ssh/connect", `{"mode":"network","host":"fake.invalid","user":"riko","password":"never-log-this"}`)
+		rec := f.do("POST", "/api/ssh/connect", `{"host":"fake.invalid","user":"riko","password":"never-log-this"}`)
 		if rec.Code != 409 || errorCode(t, rec.Body.Bytes()) != tc.code || strings.Contains(rec.Body.String(), "never-log-this") {
 			t.Fatalf("%s: %d %s", tc.code, rec.Code, rec.Body)
 		}
 	}
 	board := testssh.NewN1(t, "correct-password")
 	host, port := board.Server.HostPort()
-	body := map[string]any{"mode": "network", "host": host, "port": port, "user": "riko", "password": "wrong-password", "acceptHostKey": board.Server.Fingerprint()}
+	body := map[string]any{"host": host, "port": port, "user": "riko", "password": "wrong-password", "acceptHostKey": board.Server.Fingerprint()}
 	svc.SetSSHDialer(nil)
 	rec := f.do("POST", "/api/ssh/connect", jsonBody(body))
 	if rec.Code != 409 || errorCode(t, rec.Body.Bytes()) != "ssh-authentication" {
 		t.Fatal(rec.Code, rec.Body)
-	}
-	if rec := f.do("POST", "/api/ssh/connect", `{"mode":"usb","user":"riko","password":"never-log-this"}`); rec.Code != 409 || errorCode(t, rec.Body.Bytes()) != "no-device" {
-		t.Fatal("USB without a gadget must not dial", rec.Code, rec.Body)
 	}
 }
 

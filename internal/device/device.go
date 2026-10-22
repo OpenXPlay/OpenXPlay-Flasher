@@ -15,7 +15,7 @@ import (
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 )
 
-// Mode is the USB transport a candidate offers.
+// Mode is the transport a candidate offers.
 type Mode = profile.Mode
 
 const (

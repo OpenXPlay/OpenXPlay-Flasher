@@ -59,7 +59,7 @@ Commands:
   web              serve the app's page to a browser on this computer, for UI work
 
 Flags:
-  --ssh [user@]host[:port], --ssh-usb
+  --ssh [user@]host[:port]
                    devices, plan, install, config-get, config-put: SSH / 通过 SSH 连接
   --ssh-key FILE   optional private key / 可选私钥文件
   --accept-host-key SHA256:…

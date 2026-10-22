@@ -6,11 +6,15 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
+	"io"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/app"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/testssh"
 )
 
@@ -28,14 +32,31 @@ func TestSSHFlagsAndTargets(t *testing.T) {
 	var f sshFlags
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	f.register(fs)
-	if err := fs.Parse(interspersed([]string{"--ssh-usb", "--ssh-key", "key", "--accept-host-key", "SHA256:abc"})); err != nil || !f.usb || f.key != "key" || f.accept != "SHA256:abc" {
+	if err := fs.Parse(interspersed([]string{"--ssh", "root@box:2222", "--ssh-key", "key", "--accept-host-key", "SHA256:abc"})); err != nil || !f.enabled() || f.target != "root@box:2222" || f.key != "key" || f.accept != "SHA256:abc" {
 		t.Fatal(f, err)
+	}
+	var names []string
+	fs.VisitAll(func(f *flag.Flag) { names = append(names, f.Name) })
+	if !reflect.DeepEqual(names, []string{"accept-host-key", "ssh", "ssh-key"}) {
+		t.Fatal("unexpected SSH flags", names)
+	}
+	for _, f := range []sshFlags{{key: "key"}, {accept: "SHA256:abc"}} {
+		if err := f.connect(context.Background(), nil, nil, io.Discard); err == nil || err.Error() != "Use --ssh / 请使用 --ssh" {
+			t.Fatal("missing network target accepted", err)
+		}
 	}
 }
 func TestCLISSHDevicesConfigAndTOFU(t *testing.T) {
 	const password = "cli-in-memory-secret"
 	t.Setenv("OXP_FLASHER_SSH_PASSWORD", password)
 	_, _, _ = engineFixture(t)
+	fakeService := commandService
+	commandService = func(hardware bool, events app.Events) (*app.Service, func(), error) {
+		if hardware {
+			t.Fatal("SSH command requested hardware access")
+		}
+		return fakeService(hardware, events)
+	}
 	board := testssh.NewN1(t, password)
 	host, port := board.Server.HostPort()
 	flags := []string{"--ssh", fmt.Sprintf("riko@%s:%d", host, port), "--json"}

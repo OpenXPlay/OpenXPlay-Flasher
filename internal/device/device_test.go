@@ -116,19 +116,22 @@ func TestWatchReportsChangesOnly(t *testing.T) {
 	expect("")
 }
 
-func TestN1RequiresNCMInterface(t *testing.T) {
+func TestN1IsNotDetectedOnUSB(t *testing.T) {
 	profiles, err := profile.Builtin()
 	if err != nil {
 		t.Fatal(err)
 	}
 	cl := NewClassifier(profiles)
 	d := usb.DeviceInfo{VendorID: 0x1d6b, ProductID: 0x0104}
-	if _, ok := cl.Classify(d); ok {
-		t.Fatal("generic gadget matched N1 without NCM")
-	}
-	d.Interfaces = []usb.Interface{{Class: 2, SubClass: 13, Protocol: 0}}
-	c, ok := cl.Classify(d)
-	if !ok || c.Mode != ModeSSH || len(c.Profiles) != 1 || c.Profiles[0] != "phicomm-n1" {
-		t.Fatalf("%+v", c)
+	for _, interfaces := range [][]usb.Interface{nil, {{Class: 2, SubClass: 13, Protocol: 0}}} {
+		d.Interfaces = interfaces
+		if c, ok := cl.Classify(d); ok {
+			t.Fatalf("unexpected candidate: %+v", c)
+		}
+		bus := usb.NewFakeBus(d, openStick)
+		snap := (BusDetector{Bus: bus, Classifier: cl}).Scan(context.Background())
+		if len(snap.Candidates) != 1 || snap.Candidates[0].USB.ID() != openStick.ID() || snap.Candidates[0].Mode != ModeADB {
+			t.Fatalf("UFI003 detection changed: %+v", snap)
+		}
 	}
 }

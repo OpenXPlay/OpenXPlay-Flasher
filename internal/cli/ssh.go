@@ -22,16 +22,14 @@ import (
 
 type sshFlags struct {
 	target, key, accept string
-	usb                 bool
 }
 
 func (f *sshFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.target, "ssh", "", "[user@]host[:port] / SSH 登录地址")
-	fs.BoolVar(&f.usb, "ssh-usb", false, "SSH over USB at 192.168.201.1 / 通过 USB 连接 SSH")
 	fs.StringVar(&f.key, "ssh-key", "", "SSH private key file / SSH 私钥文件")
 	fs.StringVar(&f.accept, "accept-host-key", "", "accept this SHA256 fingerprint once / 接受此 SHA256 主机密钥指纹")
 }
-func (f sshFlags) enabled() bool { return f.target != "" || f.usb }
+func (f sshFlags) enabled() bool { return f.target != "" }
 func parseSSHTarget(target string) (host, userName string, port int, err error) {
 	port = 22
 	if u, ok := strings.LastIndex(target, "@"), strings.Contains(target, "@"); ok {
@@ -65,20 +63,11 @@ var readSecret = terminalSecret
 func (f sshFlags) connect(ctx context.Context, svc *app.Service, stdin io.Reader, stderr io.Writer) error {
 	if !f.enabled() {
 		if f.key != "" || f.accept != "" {
-			return errors.New("Use --ssh or --ssh-usb / 请使用 --ssh 或 --ssh-usb")
+			return errors.New("Use --ssh / 请使用 --ssh")
 		}
 		return nil
 	}
-	if f.usb && f.target != "" {
-		return errors.New("Choose --ssh or --ssh-usb / 请选择 --ssh 或 --ssh-usb")
-	}
-	target := f.target
-	mode := "network"
-	if f.usb {
-		target = sshdev.USBHost
-		mode = "usb"
-	}
-	host, userName, port, err := parseSSHTarget(target)
+	host, userName, port, err := parseSSHTarget(f.target)
 	if err != nil {
 		return err
 	}
@@ -100,12 +89,12 @@ func (f sshFlags) connect(ctx context.Context, svc *app.Service, stdin io.Reader
 		}
 	}
 	opts := sshdev.Options{Host: host, Port: port, User: userName, Password: password, KeyFile: f.key, AcceptHostKey: f.accept}
-	_, err = svc.SSHConnect(ctx, mode, opts)
+	_, err = svc.SSHConnect(ctx, opts)
 	var pass *sshdev.KeyPassphraseError
 	if errors.As(err, &pass) {
 		opts.Passphrase, err = readSecret(stdin, stderr, "Private key passphrase / 私钥口令: ")
 		if err == nil {
-			_, err = svc.SSHConnect(ctx, mode, opts)
+			_, err = svc.SSHConnect(ctx, opts)
 		}
 	}
 	var hostKey *sshdev.HostKeyError

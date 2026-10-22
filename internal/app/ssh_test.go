@@ -26,12 +26,15 @@ func TestSSHActiveDeviceAndIdentity(t *testing.T) {
 	svc, _ := NewForBus(bus, nil)
 	svc.dataDir = t.TempDir()
 	opts := sshdev.Options{Host: host, Port: port, User: "riko", Password: password, AcceptHostKey: board.Server.Fingerprint()}
-	state, err := svc.SSHConnect(context.Background(), "network", opts)
+	state, err := svc.SSHConnect(context.Background(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if state.Target.Profile != "phicomm-n1" || state.Identity.Serial != "021122334455" || state.Target.Device.Serialno != state.Identity.Serial || state.Target.Name["zh-CN"] != "斐讯 N1" || state.NextSteps.AdminURL != "https://127.0.0.1:6975/" || state.Installed.Layers["base"] == "" {
 		t.Fatalf("%+v", state)
+	}
+	if c := state.Target.Device; c.Connection != "network" || c.Host != host || c.Port != port || state.Identity.Location != board.Server.Listener.Addr().String() {
+		t.Fatalf("network identity: %+v, %+v", c, state.Identity)
 	}
 	for _, c := range state.Choices {
 		if c.Destructive || c.ID == "base" {
@@ -69,7 +72,27 @@ func TestSSHActiveDeviceAndIdentity(t *testing.T) {
 		t.Fatal("SSH credentials retained on device switch")
 	}
 	board.SetModel("Another board")
-	if _, err = svc.SSHConnect(context.Background(), "network", opts); err == nil {
+	if _, err = svc.SSHConnect(context.Background(), opts); err == nil {
 		t.Fatal("wrong model accepted")
+	}
+}
+
+func TestSSHSessionMatchesNetworkIdentity(t *testing.T) {
+	connected := device.Candidate{Mode: device.ModeSSH, Host: "n1.test", Port: 22, Connection: "network", Serialno: "021122334455", Profiles: []string{"phicomm-n1"}}
+	svc := &Service{sshSession: &sshSession{candidate: connected, serial: connected.Serialno}}
+	other := device.Candidate{Mode: device.ModeSSH, Host: "other.test", Serialno: "021122334466", USB: usb.DeviceInfo{Serial: connected.Serialno}}
+	snap := svc.addSSH(device.Snapshot{Candidates: []device.Candidate{
+		{Mode: device.ModeSSH, Host: connected.Host},
+		{Mode: device.ModeSSH, Host: "renamed.test", Serialno: connected.Serialno},
+		other, ufi003ADB,
+	}})
+	if len(snap.Candidates) != 3 || snap.Candidates[0].Host != other.Host || snap.Candidates[1].USB.ID() != ufi003ADB.USB.ID() || snap.Candidates[2].Host != connected.Host {
+		t.Fatalf("network candidates: %+v", snap)
+	}
+	other.USB = usb.DeviceInfo{}
+	svc.installTarget = &InstallTarget{Device: connected}
+	svc.detector = &baseTestDetector{candidates: []device.Candidate{other}}
+	if snap := svc.scanDevices(context.Background(), false); len(snap.Candidates) != 2 || snap.Candidates[0].Serialno != other.Serialno {
+		t.Fatalf("network identity replaced: %+v", snap)
 	}
 }

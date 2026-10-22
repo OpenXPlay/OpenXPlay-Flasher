@@ -106,12 +106,10 @@ export function fixture(scene) {
 function n1Fixture(scene) {
  const data=fixture(scene==="n1-done"?"done-success":"choose");
  const connected=["n1-choose","n1-done"].includes(scene);
- const mode=scene==="n1-usb-login"?"usb":"network";
- const gadget={mode:"ssh",profiles:["phicomm-n1"],usb:{vendorId:0x1d6b,productId:0x104,bus:1,address:7,path:[2],interfaces:[{class:2,subClass:13,protocol:0}],serial:"021122334455"}};
- const device={...gadget,connection:mode,host:mode==="usb"?"192.168.201.1":"192.168.1.80",port:22,serialno:"021122334455",product:"Phicomm N1"};
+ const device={mode:"ssh",profiles:["phicomm-n1"],connection:"network",host:"192.168.1.80",port:22,serialno:"021122334455",product:"Phicomm N1"};
  data.connection={profile:scene==="device-type"?"":"phicomm-n1",...(connected?{device}:{})};
- data.recent=[{host:"192.168.1.80",port:22,user:"riko",mode:"network"},{host:"192.168.201.1",port:22,user:"riko",mode:"usb"}];
- data.devices={candidates:scene==="device-type"?[candidate(),gadget]:connected?[device]:mode==="usb"?[gadget]:[]};
+ data.recent=[{host:"192.168.1.80",port:22,user:"riko",mode:"network"}];
+ data.devices={candidates:scene==="device-type"?[candidate()]:connected?[device]:[]};
  if(!connected){delete data.state.target;delete data.state.identity;delete data.state.installed;delete data.state.job;data.state.layers=[];data.state.choices=[];return data;}
  data.state.target={profile:"phicomm-n1",name:n1Profile.name,device};data.state.identity={mode:"ssh",serial:device.serialno,location:device.host+":22"};
  Object.assign(data.state.installed,{kernelRelease:"6.12.112-ophub",deviceTreeModel:"Phicomm N1",debianVersion:"13",dpkgArchitecture:"arm64",prettyName:"Debian GNU/Linux 13 (trixie)"});
@@ -149,13 +147,13 @@ const server = createServer(async (req, res) => {
   if(url.pathname==="/api/devices/select"){
    let body="";for await(const chunk of req)body+=chunk;const input=JSON.parse(body);
    data.connection={profile:input.profile};
-   if(input.profile==="phicomm-n1"){Object.assign(data,n1Fixture("n1-usb-login"));}else Object.assign(data,fixture("choose"));
+   if(input.profile==="phicomm-n1"){Object.assign(data,n1Fixture("n1-network-login"));}else Object.assign(data,fixture("choose"));
    data.rev=(data.rev||1)+1;json(data.state);return;
   }
   if(url.pathname==="/api/ssh/connect"){
    let body="";for await(const chunk of req)body+=chunk;const input=JSON.parse(body);
    if(scene==="n1-timeout"){json({code:"ssh-timeout"},409);return;}
-   if(!input.acceptHostKey){json({code:"ssh-host-unknown",host:(input.host||"192.168.201.1")+":22",keyType:"ssh-ed25519",fingerprint:"SHA256:K3eP9Yg2rVN8tX4JmU6sD1aH5bF0cL7wQzOiRxABcdE"},409);return;}
+   if(!input.acceptHostKey){json({code:"ssh-host-unknown",host:input.host+":"+(input.port||22),keyType:"ssh-ed25519",fingerprint:"SHA256:K3eP9Yg2rVN8tX4JmU6sD1aH5bF0cL7wQzOiRxABcdE"},409);return;}
    Object.assign(data,n1Fixture("n1-choose"));data.rev=(data.rev||1)+1;json(data.state);return;
   }
   if(url.pathname==="/api/ssh/key/pick"){json({path:"/fake/keys/n1_ed25519"});return;}

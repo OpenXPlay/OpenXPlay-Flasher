@@ -44,7 +44,7 @@ func (s *Service) scanDevices(ctx context.Context, probe bool) device.Snapshot {
 	open, supported := s.fastbootOpen, s.fastbootSupported
 	for i := range snap.Candidates {
 		c := &snap.Candidates[i]
-		if target := s.installTarget; target != nil && c.Mode == target.Device.Mode &&
+		if target := s.installTarget; target != nil && c.Mode != device.ModeSSH && c.Mode == target.Device.Mode &&
 			c.USB.Location() == target.Device.USB.Location() && c.USB.ID() == target.Device.USB.ID() &&
 			c.USB.Serial == target.Device.USB.Serial {
 			c.Serialno = target.Device.Serialno

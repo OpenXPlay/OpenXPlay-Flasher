@@ -65,7 +65,7 @@ function deviceCard(c) {
 function renderDevices() {
   const root = document.getElementById("devices");
   const focused = root.contains(document.activeElement) ? document.activeElement.dataset.focus : "";
-  const connection = connectionView.renderConnection({root,chooser:document.getElementById("device-selection"),profiles:state.profiles,devices:state.devices,running:installView.running()});
+  const connection = connectionView.renderConnection({root,chooser:document.getElementById("device-selection"),profiles:state.profiles,running:installView.running()});
   document.getElementById("install").hidden = !connection.ready;
   const configTab=document.querySelector('[data-view="config"]');
   if(configTab)configTab.disabled=installView.running()||!selectionReady();

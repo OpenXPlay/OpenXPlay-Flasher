@@ -6,7 +6,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"net"
 	"path/filepath"
 	"strings"
@@ -112,7 +111,7 @@ func (s *Service) addSSH(snap device.Snapshot) device.Snapshot {
 	out := snap
 	out.Candidates = nil
 	for _, c := range snap.Candidates {
-		if c.Mode == device.ModeSSH && (c.Host == session.candidate.Host && c.Host != "" || c.Serialno == session.serial || session.candidate.Connection == "usb" && c.USB.Location() == session.candidate.USB.Location() || c.USB.Serial != "" && strings.EqualFold(c.USB.Serial, session.serial)) {
+		if c.Mode == device.ModeSSH && (c.Host == session.candidate.Host && c.Host != "" || c.Serialno == session.serial) {
 			continue
 		}
 		out.Candidates = append(out.Candidates, c)
@@ -167,8 +166,8 @@ func (s *Service) SSHDisconnect() error {
 }
 
 // SSHConnect authenticates and confirms the model, OS, architecture and stable board MAC
-// before publishing a connected device. USB descriptors alone never establish board identity.
-func (s *Service) SSHConnect(ctx context.Context, mode string, o sshdev.Options) (InstallState, error) {
+// before publishing a connected network device.
+func (s *Service) SSHConnect(ctx context.Context, o sshdev.Options) (InstallState, error) {
 	if !s.configMu.TryLock() {
 		return s.InstallSnapshot(), ErrDeviceBusy
 	}
@@ -183,32 +182,7 @@ func (s *Service) SSHConnect(ctx context.Context, mode string, o sshdev.Options)
 	if p.ID == "" {
 		return s.InstallSnapshot(), ErrUnconfirmed
 	}
-	candidate := device.Candidate{Mode: device.ModeSSH, Profiles: []string{p.ID}, Connection: mode}
-	switch mode {
-	case "usb":
-		var count int
-		for _, c := range s.detector.Scan(ctx).Candidates {
-			if c.Mode == device.ModeSSH {
-				for _, id := range c.Profiles {
-					if id == p.ID {
-						candidate.USB = c.USB
-						count++
-					}
-				}
-			}
-		}
-		if count != 1 {
-			return s.InstallSnapshot(), ErrNoDevice
-		}
-		for _, m := range p.Connections {
-			if m.ID == mode {
-				o.Host, o.Port = m.Host, m.Port
-			}
-		}
-	case "network":
-	default:
-		return s.InstallSnapshot(), errors.New("Choose USB or network / 请选择 USB 或网络连接")
-	}
+	candidate := device.Candidate{Mode: device.ModeSSH, Profiles: []string{p.ID}, Connection: "network"}
 	s.mu.Lock()
 	o.Dialer = s.sshDialer
 	s.mu.Unlock()
@@ -229,9 +203,6 @@ func (s *Service) SSHConnect(ctx context.Context, mode string, o sshdev.Options)
 	var serial string
 	if err == nil {
 		serial, err = sshSerial(ctx, d)
-	}
-	if err == nil && candidate.USB.Serial != "" && !strings.EqualFold(candidate.USB.Serial, serial) {
-		err = &stage.Problem{Code: "serial-mismatch"}
 	}
 	if err != nil {
 		return s.InstallSnapshot(), err

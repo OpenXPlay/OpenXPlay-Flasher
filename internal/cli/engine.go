@@ -50,7 +50,7 @@ var commandService = func(hardware bool, events app.Events) (*app.Service, func(
 // standard parser. Boolean flags never consume the following positional argument.
 func interspersed(args []string) []string {
 	var flags, rest []string
-	booleans := map[string]bool{"json": true, "yes": true, "downgrade": true, "no-signature-check": true, "ssh-usb": true, "restart": true}
+	booleans := map[string]bool{"json": true, "yes": true, "downgrade": true, "no-signature-check": true, "restart": true}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -152,7 +152,7 @@ func runEngineCLI(cmd string, args []string, stdin io.Reader, stdout, stderr io.
 			return usageError()
 		}
 	}
-	hardware := !sshOptions.enabled() && (cmd == "fastboot" || cmd == "designate-stock" || cmd == "plan" || cmd == "install" || cmd == "devices" || cmd == "config-get" || cmd == "config-put") || sshOptions.usb
+	hardware := !sshOptions.enabled() && (cmd == "fastboot" || cmd == "designate-stock" || cmd == "plan" || cmd == "install" || cmd == "devices" || cmd == "config-get" || cmd == "config-put")
 	if sshOptions.enabled() && cmd != "devices" && cmd != "plan" && cmd != "install" && cmd != "config-get" && cmd != "config-put" {
 		return usageError()
 	}

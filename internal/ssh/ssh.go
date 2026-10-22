@@ -24,15 +24,13 @@ import (
 	cryptossh "golang.org/x/crypto/ssh"
 )
 
-const USBHost = "192.168.201.1"
-
-// Options intentionally has no serializable credential fields. Never include it in state,
-// settings, diagnostics or formatted errors.
-// Dialer is the TCP boundary; fixtures redirect logical USB addresses to loopback.
+// Dialer is the TCP boundary; fixtures can substitute an in-process connection.
 type Dialer interface {
 	DialContext(context.Context, string, string) (net.Conn, error)
 }
 
+// Options intentionally has no serializable credential fields. Never include it in state,
+// settings, diagnostics or formatted errors.
 type Options struct {
 	Dialer            Dialer
 	Host              string
