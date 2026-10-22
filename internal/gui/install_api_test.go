@@ -280,7 +280,11 @@ func TestInstallRefusalsAndDowngrade(t *testing.T) {
 	if rec := f.do("POST", "/api/install/start", `{"choice":"relay"}`); rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != "downgrade" {
 		t.Fatalf("downgrade=%d %s", rec.Code, rec.Body)
 	}
-	if rec := f.do("POST", "/api/install/start", `{"choice":"base"}`); rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != "typed-serial" {
+	wantCode := "typed-serial"
+	if !usb.TransfersSupported() {
+		wantCode = "fastboot-unsupported"
+	}
+	if rec := f.do("POST", "/api/install/start", `{"choice":"base"}`); rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != wantCode {
 		t.Fatalf("base=%d %s", rec.Code, rec.Body)
 	}
 	bus.Set(usb.DeviceInfo{VendorID: 0x18d1, ProductID: 0xd001, Address: 1}, usb.DeviceInfo{VendorID: 0x18d1, ProductID: 0xd001, Address: 2})
@@ -555,11 +559,15 @@ func TestCloseGuardStaysArmedThroughFailureReadback(t *testing.T) {
 
 func TestDestructiveAPIDemandsTypedDeviceSerial(t *testing.T) {
 	f, _, _, dev, _ := installFixture(t, true)
+	wantCode := "typed-serial"
+	if !usb.TransfersSupported() {
+		wantCode = "fastboot-unsupported"
+	}
 	for _, choice := range []string{"base", "full-reinstall"} {
 		for _, confirmation := range []string{"", "another-board"} {
 			body, _ := json.Marshal(map[string]string{"choice": choice, "yesErase": confirmation})
 			rec := f.do("POST", "/api/install/start", string(body))
-			if rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != "typed-serial" {
+			if rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != wantCode {
 				t.Fatalf("%s: %d %s", choice, rec.Code, rec.Body)
 			}
 		}

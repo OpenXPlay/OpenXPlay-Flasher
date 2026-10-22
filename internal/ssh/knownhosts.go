@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/privatefile"
 	cryptossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -70,14 +71,11 @@ func hostCallback(file, accept string) cryptossh.HostKeyCallback {
 		if err = os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 			return err
 		}
-		f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		f, err := privatefile.Append(file)
 		if err != nil {
 			return err
 		}
 		defer f.Close()
-		if err = f.Chmod(0o600); err != nil {
-			return err
-		}
 		_, err = fmt.Fprintln(f, knownhosts.Line([]string{host}, key))
 		if err == nil {
 			err = f.Sync()
@@ -135,7 +133,7 @@ func ForgetHost(file, address string) error {
 			kept = append(kept, line)
 		}
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(file), ".known-hosts-*")
+	tmp, err := privatefile.CreateTemp(filepath.Dir(file), ".known-hosts-")
 	if err != nil {
 		return err
 	}

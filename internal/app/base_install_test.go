@@ -757,12 +757,14 @@ func TestRememberedPathsAreRecheckedWithoutCopying(t *testing.T) {
 	d.det.set(testCandidate(profile.ModeADB, 1, true))
 	other := New(s.profiles, s.detector, discardEvents{})
 	other.SetADB(baseTestConnector{d: d})
+	// Restore the fixture's fake fastboot capability, including on Windows.
+	other.SetFastboot(s.fastbootOpen, s.fastbootSupported)
 	other.ConfigureStorage(s.dataDir, s.cacheDir, s.backupDir, source)
 	other.CatalogShow(t.Context())
 	other.Install(t.Context())
 	before, err := other.InstallPlan(stage.Request{Choice: "full-reinstall"})
-	if err != nil || before.Ready {
-		t.Fatal("stored metadata was trusted without rehashing")
+	if err != nil || before.Problem != nil || before.Ready {
+		t.Fatalf("stored metadata was trusted without rehashing: %+v, %v", before, err)
 	}
 	state, err := other.InstallPrepare(t.Context(), "full-reinstall")
 	if err != nil {
@@ -775,7 +777,7 @@ func TestRememberedPathsAreRecheckedWithoutCopying(t *testing.T) {
 	}
 	after, err := other.InstallPlan(stage.Request{Choice: "full-reinstall"})
 	if err != nil || !after.Ready {
-		t.Fatal("remembered files not rechecked", err)
+		t.Fatalf("remembered files not rechecked: %+v, %v", after, err)
 	}
 	filename := other.picks[artifactKey("base", "boot")].Path
 	data, err := os.ReadFile(filename)

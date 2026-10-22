@@ -17,6 +17,8 @@ path = [
     "go.mod",
     "go.sum",
     "build/windows/winres.json",
+    "catalog/beta.json",
+    "internal/base/testdata/chain-history/jobs/ufi003-4336bd41/*.json",
     "internal/profile/profiles/*.json",
 ]
 SPDX-FileCopyrightText = "2026 OpenXPlay.org"

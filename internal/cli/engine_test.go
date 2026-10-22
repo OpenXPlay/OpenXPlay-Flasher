@@ -17,6 +17,7 @@ import (
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/base"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/catalog"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/stage"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 )
 
 func engineFixture(t *testing.T) (*app.Service, *cliDevice, string) {
@@ -122,9 +123,16 @@ func TestCLIInstallJSONAndLocalCompatibility(t *testing.T) {
 }
 func TestCLIBaseNeedsTypedSerial(t *testing.T) {
 	_, dev, _ := engineFixture(t)
+	wantCode := "typed-serial"
+	if !usb.TransfersSupported() {
+		wantCode = "fastboot-unsupported"
+	}
 	var out, errOut bytes.Buffer
 	code := runEngineCLI("install", []string{"--choice", "base", "--json", "--yes"}, strings.NewReader(""), &out, &errOut)
-	if code != 1 || !strings.Contains(out.String(), "typed-serial") || dev.installs != 0 {
+	var failure struct {
+		Code string `json:"code"`
+	}
+	if code != 1 || json.Unmarshal(out.Bytes(), &failure) != nil || failure.Code != wantCode || dev.installs != 0 {
 		t.Fatalf("exit %d out %s err %s", code, &out, &errOut)
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/adb"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/testfile"
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/testssh"
 	cryptossh "golang.org/x/crypto/ssh"
 )
@@ -68,10 +69,7 @@ func TestHostKeyLifecycle(t *testing.T) {
 	if strings.Contains(string(data), testPassword) {
 		t.Fatal("password persisted")
 	}
-	info, _ := os.Stat(o.KnownHosts)
-	if info.Mode().Perm() != 0o600 {
-		t.Fatal("known_hosts mode")
-	}
+	testfile.Private(t, o.KnownHosts)
 	changed, _ := testssh.NewSigner(t)
 	s.ChangeKey(changed)
 	o.AcceptHostKey = s.Fingerprint()
@@ -82,6 +80,7 @@ func TestHostKeyLifecycle(t *testing.T) {
 	if err = ForgetHost(o.KnownHosts, c.Address()); err != nil {
 		t.Fatal(err)
 	}
+	testfile.Private(t, o.KnownHosts)
 	o.AcceptHostKey = ""
 	_, err = connector(t, o).Connect(context.Background())
 	if !errors.As(err, &key) || key.Changed {
@@ -93,6 +92,7 @@ func TestHostKeyLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.Close()
+	testfile.Private(t, o.KnownHosts)
 }
 func TestPasswordAndEncryptedKey(t *testing.T) {
 	signer, key := testssh.NewSigner(t)

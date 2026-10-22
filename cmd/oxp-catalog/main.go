@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/catalog"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/privatefile"
 )
 
 func main() {
@@ -183,7 +184,13 @@ func createKey(ctx context.Context, path string, data []byte, mode os.FileMode) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	var f *os.File
+	var err error
+	if mode == 0o600 {
+		f, err = privatefile.Create(path)
+	} else {
+		f, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	}
 	if err != nil {
 		return err
 	}

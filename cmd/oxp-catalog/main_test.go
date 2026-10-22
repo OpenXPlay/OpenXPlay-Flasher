@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/catalog"
+	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/testfile"
 )
 
 func sourceFixture(t *testing.T, dir string) string {
@@ -58,10 +59,7 @@ func TestToolEndToEnd(t *testing.T) {
 	if err := invoke(nil, "keygen", "--public", pub, "--secret", secret); err != nil {
 		t.Fatal(err)
 	}
-	st, err := os.Stat(secret)
-	if err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("secret mode: %v %v", st, err)
-	}
+	testfile.Private(t, secret)
 	key, err := os.ReadFile(secret)
 	if err != nil {
 		t.Fatal(err)
