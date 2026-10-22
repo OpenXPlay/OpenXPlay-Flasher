@@ -141,7 +141,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
-          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
+          # Subject and body only: a signed tag's signature block is not part of the notes.
+          git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
           pre=()
           case "$GITHUB_REF_NAME" in *-*) pre=(--prerelease) ;; esac
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "OpenXPlay Flasher $GITHUB_REF_NAME" \
