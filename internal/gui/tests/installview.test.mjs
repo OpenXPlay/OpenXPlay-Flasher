@@ -43,7 +43,7 @@ function snapshot() {
   const choice = (id, ids) => ({ id, layers: ids, destructive: false, ready: false,
     steps: ids.map((layer) => ({ layer, action: "install" })),
     needs: ids.map((layer) => ({ layer, offline:true, artifacts: (layer === "relay" ? ["deb", "manifest"] : ["bundle"]).map((role)=>({role, name:role, verified:false, urls:["https://github.com/OpenXPlay/OpenXPlay-Relay/releases"]})), status: "missing", fileTypes: layer === "device" ? [".tar.gz"] : [".deb", ".manifest.json"], ready: false })) });
-  return { target: { profile: "ufi003", device: { usb: { serial: "fake-device" } } },
+  return { target: { profile: "ufi003", device: { mode: "adb", serialno: "fake-device", usb: { serial: "fake-device" } } },
     installed: { layers: { base: "kernel", device: "1.0", relay: "1.0" } }, installedStale: false,
     layers, packages: [], choices: [choice("full", ["device", "relay"]), choice("device", ["device"]), choice("relay", ["relay"])], suggested: "relay" };
 }
@@ -56,6 +56,70 @@ function ready(s) {
   return s;
 }
 const boot = { web: true, links: { en: { manual: "https://openxplay.org/en/ufi003-flash" }, "zh-CN": { manual: "https://openxplay.org/ufi003-flash" } } };
+
+for (const language of ["en", "zh-CN"]) test("Connect offers existing relay identity, replacement and admin in " + language, async () => {
+  const d = dom(); setLang(language);
+  const saved = globalThis.setInterval; globalThis.setInterval = () => 0;
+  const page = await import("../assets/install.js?connected-next-" + language);
+  page.init(boot); globalThis.setInterval = saved;
+  for (const mode of ["adb", "ssh"]) {
+    const s = snapshot();
+    s.target.device = { ...s.target.device, mode, host: "n1.test" };
+    s.target.profile = mode === "ssh" ? "phicomm-n1" : "ufi003";
+    s.nextSteps = { serial: "fake-device", identity: "absent", adminUrl: mode === "ssh" ? "https://n1.test:6975/" : "" };
+    const calls = [];
+    globalThis.fetch = async (url, options) => {
+      calls.push({ url, body: options?.body ? JSON.parse(options.body) : undefined });
+      if (url === "/api/identity/import") s.nextSteps.identity = "present";
+      return { ok: true, status: 200, json: async () => url === "/api/identity" ? s.nextSteps : s };
+    };
+    page.reset(s);
+    assert.equal(d.get("install-connect").hidden, false);
+    assert.ok(d.root.textContent.includes(t("Installed layers")));
+    assert.ok(d.root.textContent.includes(t("Next steps")));
+    assert.equal(d.get("identity-pick").disabled, false);
+    assert.equal(d.get("admin-open").tag, mode === "ssh" ? "a" : "button");
+    const link = d.nodes().find((n) => n.tag === "a" && n.textContent === t("Continue with network setup"));
+    assert.ok(link);
+    if (mode === "adb") assert.equal(link.href, "https://openxplay.org/" + (language === "en" ? "en/" : "") + "ufi003-relay#step-network");
+    d.get("identity-path").listeners.input[0]({ target: { value: "/fake/identity.zip" } });
+    await d.get("identity-pick").click();
+    assert.deepEqual(calls.at(-1), { url: "/api/identity/import", body: { paths: ["/fake/identity.zip"] } });
+    assert.ok(d.root.textContent.includes(t("Identity added")));
+    assert.equal(d.get("identity-pick").disabled, false, "existing identity can be replaced");
+    assert.equal(d.get("install-connect").hidden, false, "import stays on Connect");
+    s.nextSteps.identity = "unknown"; page.receive(s);
+    assert.ok(d.button("Check identity status"));
+    await d.button("Check identity status").click();
+    assert.equal(calls.at(-1).url, "/api/identity");
+    s.nextSteps.serial = "another-board"; s.nextSteps.identity = "present"; page.receive(s);
+    assert.ok(!d.nodes().some((n) => n.className === "identity-success result ok"));
+    for (const mutate of [
+      (v) => { v.problem = { code: "no-device" }; },
+      (v) => { v.problem = { code: "several-devices" }; },
+      (v) => { v.problem = { code: "unconfirmed" }; },
+      (v) => { delete v.target; },
+      (v) => { delete v.installed.layers.relay; },
+      (v) => { v.installedStale = true; },
+      (v) => { v.target.device.mode = "fastboot"; },
+      (v) => { v.target.device.mode = "stock"; },
+      (v) => { delete v.target.device.serialno; v.target.device.usb.serial = "transport-only"; },
+      (v) => { v.identity = { mode, serial: "different-board" }; },
+    ]) {
+      const hidden = structuredClone(s); mutate(hidden); page.reset(hidden);
+      assert.equal(d.get("identity-pick"), undefined);
+      assert.equal(d.get("admin-open"), undefined);
+    }
+    const running = structuredClone(s);
+    running.job = { status: "running", started: "2026-10-22T00:00:00Z", steps: [], log: "" };
+    page.reset(running);
+    assert.equal(d.get("identity-pick"), undefined);
+    const done = structuredClone(s);
+    done.job = { ...running.job, status: "succeeded", finished: "2026-10-22T00:01:00Z", installed: done.installed, observed: true };
+    page.reset(done);
+    assert.ok(d.get("identity-pick"), "successful job keeps the same card");
+  }
+});
 
 for (const language of ["en", "zh-CN"]) test("backup findings distinguish partition growth from EFS changes in " + language, async () => {
   const d = dom(); setLang(language);

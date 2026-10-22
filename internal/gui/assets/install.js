@@ -185,6 +185,7 @@ function next(step, enabled = true) {
 
 function connectView() {
   return [title(t("Installed layers")), installed(view.state?.installed, view.state?.installedStale),
+    nextStepsState(view.state).available ? nextStepsCard() : "",
     el("div", { class: "actions" }, [el("button", { type: "button", disabled: view.busy, onclick: refresh }, t("Read again")),
       next(1, canNavigate(view.state, view.choice, 1))])];
 }
@@ -589,21 +590,19 @@ function nextStepsCard() {
   if (next.identity === "present") parts.push(el("div", { class: "identity-success result ok", role: "status" }, [
     el("strong", {}, t("Identity added")), el("p", {}, t("Files: {files}", { files: "identity.pk8 · certificate.p7b" })),
   ]));
-  else {
-    parts.push(el("h3", {}, t("Add your CarPlay identity")), el("p", {}, t("Choose the private key and certificate together or one after the other, in any order (DER or PEM; any file names), or a ZIP containing identity.pk8 and certificate.p7b.")));
-    if (view.boot.web) parts.push(el("label", { for: "identity-path" }, t("Paths to identity files or a ZIP on this computer (one per line)")), el("textarea", {
-      id: "identity-path", rows: 2, value: view.identityPath, disabled, spellcheck: "false", autocomplete: "off",
-      oninput: (e) => { view.identityPath = e.target.value; },
-    }));
-    if (view.identityPaths.length) parts.push(el("p", { class: "note" }, view.identityPaths.map((p) => p.split(/[\\/]/).at(-1)).join(" · ")));
-    parts.push(el("button", { id: "identity-pick", type: "button", disabled, onclick: importIdentity }, t("Choose identity files or ZIP…")));
-    if (next.identity === "unknown") parts.push(el("button", { type: "button", disabled, onclick: async () => {
-      view.busy = true; view.nextError = null; render();
-      try { const state = await api("identity"); view.state = { ...view.state, nextSteps: state }; }
-      catch (error) { view.nextError = error; }
-      view.busy = false; render();
-    } }, t("Check identity status")));
-  }
+  parts.push(el("h3", {}, t("Add your CarPlay identity")), el("p", {}, t("Choose the private key and certificate together or one after the other, in any order (DER or PEM; any file names), or a ZIP containing identity.pk8 and certificate.p7b.")));
+  if (view.boot.web) parts.push(el("label", { for: "identity-path" }, t("Paths to identity files or a ZIP on this computer (one per line)")), el("textarea", {
+    id: "identity-path", rows: 2, value: view.identityPath, disabled, spellcheck: "false", autocomplete: "off",
+    oninput: (e) => { view.identityPath = e.target.value; },
+  }));
+  if (view.identityPaths.length) parts.push(el("p", { class: "note" }, view.identityPaths.map((p) => p.split(/[\\/]/).at(-1)).join(" · ")));
+  parts.push(el("button", { id: "identity-pick", type: "button", disabled, onclick: importIdentity }, t("Choose identity files or ZIP…")));
+  if (next.identity === "unknown") parts.push(el("button", { type: "button", disabled, onclick: async () => {
+    view.busy = true; view.nextError = null; render();
+    try { const state = await api("identity"); view.state = { ...view.state, nextSteps: state }; }
+    catch (error) { view.nextError = error; }
+    view.busy = false; render();
+  } }, t("Check identity status")));
   if (view.identityMessage && next.identity !== "present") parts.push(el("p", { class: "check ok" }, view.identityMessage));
   if(view.state?.target?.device?.mode === "ssh") {
     const host=view.state.target.device.host;

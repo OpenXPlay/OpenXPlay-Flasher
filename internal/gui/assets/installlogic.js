@@ -329,13 +329,17 @@ export function phaseGroups(steps) {
 }
 export function nextStepsState(state) {
   const job = state?.job;
-  const facts = job?.installed || state?.installed;
-  const relay = job?.status === "succeeded" && !!facts?.layers?.relay;
-  const serial = serialFor(state);
+  const facts = state?.installed || job?.installed;
+  const relay = !!facts?.layers?.relay;
+  const device = state?.target?.device;
+  const serial = state?.identity?.serial || device?.serialno || "";
+  const connected = !!state?.target?.profile && ["adb", "ssh"].includes(device?.mode) && !!serial &&
+    (!device.serialno || device.serialno === serial) && (!state.identity?.mode || state.identity.mode === device.mode) &&
+    !state.problem && !state.installedStale;
   const next = state?.nextSteps || {};
-  return { relay, connected: !!state?.target && !state?.problem,
-    identity: next.serial === serial ? next.identity || "unknown" : "unknown",
-    forward: next.forward?.active && next.forward.serial === serial ? next.forward : null };
+  return { relay, connected, available: !!state?.installed?.layers?.relay && connected && !isRunning(state),
+    identity: serial && next.serial === serial ? next.identity || "unknown" : "unknown",
+    forward: serial && next.forward?.active && next.forward.serial === serial ? next.forward : null };
 }
 
 export function sizeText(bytes) {

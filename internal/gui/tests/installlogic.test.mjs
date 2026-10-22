@@ -176,8 +176,8 @@ test("phase groups retain engine order and distinguish critical, resumable and n
   assert.deepEqual(steps.slice(0, 3).map(phaseStyle), ["neutral", "critical", "resumable"]);
 });
 
-test("Done next steps bind identity and forward status to this dongle and a successful relay install", () => {
-  const s = { target: { device: {} }, identity: { serial: "board1" }, installed: { layers: { relay: "1" } },
+test("next steps bind identity and forward status to the confirmed Linux relay", () => {
+  const s = { target: { profile: "ufi003", device: { mode: "adb" } }, identity: { mode: "adb", serial: "board1" }, installed: { layers: { relay: "1" } },
     job: { status: "succeeded" }, nextSteps: { serial: "board1", identity: "absent", forward: { active: true, serial: "board1", address: "https://127.0.0.1:60001/" } } };
   assert.equal(nextStepsState(s).relay, true);
   assert.equal(nextStepsState(s).identity, "absent");
@@ -190,7 +190,11 @@ test("Done next steps bind identity and forward status to this dongle and a succ
   s.problem = { code: "no-device" };
   assert.equal(nextStepsState(s).connected, false);
   s.job.status = "failed";
-  assert.equal(nextStepsState(s).relay, false);
+  assert.equal(nextStepsState(s).available, false);
+  delete s.problem;
+  assert.equal(nextStepsState(s).available, true, "an earlier failure does not hide a freshly confirmed relay");
+  delete s.job;
+  assert.equal(nextStepsState(s).available, true, "no app install is required");
 });
 
 test("browser multiple paths preserve spaces and arbitrary filenames", () => {

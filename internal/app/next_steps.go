@@ -114,6 +114,22 @@ func (s *Service) nextDevice(ctx context.Context) (adb.Device, string, error) {
 	return d, serial, nil
 }
 
+// IdentityStatus checks the current confirmed Linux relay, then observes file metadata only.
+// An unreadable observation is unknown; a missing device or relay is a typed error.
+func (s *Service) IdentityStatus(ctx context.Context) (NextSteps, error) {
+	if !s.configMu.TryLock() {
+		return NextSteps{Identity: "unknown"}, ErrDeviceBusy
+	}
+	defer s.configMu.Unlock()
+	d, serial, err := s.nextDevice(ctx)
+	if err != nil {
+		return NextSteps{Identity: "unknown"}, err
+	}
+	defer d.Close()
+	s.observeIdentity(ctx, d, serial)
+	return s.emitInstall().NextSteps, nil
+}
+
 func (s *Service) IdentityImport(ctx context.Context, paths []string) (InstallState, error) {
 	// Read and parse every input before connecting, even when one file is missing.
 	pair, err := identity.Read(paths)

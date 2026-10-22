@@ -133,7 +133,12 @@ func guidedRoutes(mux *http.ServeMux, d Deps) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /api/identity", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, d.Service.Install(r.Context()).NextSteps)
+		state, err := d.Service.IdentityStatus(r.Context())
+		if err != nil {
+			writeInstallError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, state)
 	})
 	mux.HandleFunc("POST /api/identity/pick", func(w http.ResponseWriter, r *http.Request) {
 		var in struct{}

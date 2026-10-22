@@ -52,6 +52,11 @@ Commands:
                    install from chosen local files / 从所选本地文件安装
                    choices: stock, base, full-reinstall, repair, full, device, relay
                    --choice full-reinstall --base-plan repair: C + device + relay / 修复并完整安装
+  identity status [--ssh …]
+                   print absent, present or unknown using metadata only / 仅检查文件元数据，显示身份状态
+  identity import [--ssh …] FILE...
+                   add or replace DER/PEM key and certificate, or one ZIP / 添加或替换 DER/PEM 私钥和证书，或一个 ZIP
+  admin [--ssh …]   print the admin URL; keep USB open until Ctrl-C / 显示管理页面地址；USB 连接保持到按 Ctrl-C
   config-get PATH  print a configuration file of the connected device
   config-put PATH FILE
                    write FILE to PATH on the device (backup first; the relay restarts for
@@ -60,7 +65,7 @@ Commands:
 
 Flags:
   --ssh [user@]host[:port]
-                   devices, plan, install, config-get, config-put: SSH / 通过 SSH 连接
+                   devices, plan, install, identity, admin, config-get, config-put: SSH / 通过 SSH 连接
   --ssh-key FILE   optional private key / 可选私钥文件
   --accept-host-key SHA256:…
                    accept a verified first-use fingerprint / 接受已核对的首次连接指纹
@@ -85,6 +90,8 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	}
 	cmd := args[0]
 	switch cmd {
+	case "identity", "admin":
+		return runNextStepsCLI(cmd, args[1:], os.Stdin, stdout, stderr)
 	case "catalog", "import", "backup", "fastboot", "designate-stock", "plan", "install", "devices", "config-get", "config-put":
 		return runEngineCLI(cmd, args[1:], os.Stdin, stdout, stderr)
 	}
