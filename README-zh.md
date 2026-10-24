@@ -27,6 +27,17 @@
 
 Windows 通过 SetupAPI 列出已连接的 USB 设备，扫描不依赖 adb 驱动。原生 adb 和 fastboot 通信则要求对应的设备接口使用 **WinUSB** 驱动。设备已列出但无法打开时，错误信息会指出接口并提示检查驱动。请在“设备管理器”中检查 **ADB 接口**，或进入引导加载程序后检查 **fastboot 接口**，为该接口安装兼容的 WinUSB 驱动；这两种模式可能需要分别安装驱动。对于包含多个接口的 OpenStick 设备，请保留 **RNDIS 网卡**及其网络驱动，只调整 adb 或 fastboot 接口，不要替换整个复合设备的驱动。若已运行的 adb 服务能访问设备，也可以继续通过它连接。
 
+### Windows 驱动提示与安装
+
+0.2.0-beta.2 在读取设备或打开 fastboot 接口失败时，会把底层错误显示在界面的错误区。缺少已注册的 WinUSB 接口时，提示中会包含 `needs a WinUSB driver`、`install the ADB/fastboot WinUSB driver` 或 `has no WinUSB … interface`。这些底层信息目前可能是英文；应用不会自动下载或安装驱动，也没有一键安装驱动的按钮。
+
+1. 在“设备管理器”中找到这台 UFI003 的 ADB 或 fastboot 接口，打开“属性 → 详细信息 → 硬件 ID”，核对当前模式对应的 ID。不要选择 RNDIS 网卡或整个 USB 复合设备。
+2. 下载匹配硬件 ID、Windows 版本和处理器架构的已签名驱动并解压。Windows 11 上已验证的 `USB\VID_18D1&PID_D00D` fastboot 接口可使用 [Microsoft Update Catalog 的 Android Bootloader Interface 驱动](https://www.catalog.update.microsoft.com/ScopedViewInline.aspx?updateid=76f2c233-6100-4a64-8bee-113c2da0991d)；其他 ID 应使用其对应的驱动。
+3. 右键该接口，选择“更新驱动程序 → 浏览我的电脑以查找驱动程序”，选择解压目录并完成安装。Windows 的手动安装步骤见 [Microsoft 说明](https://support.microsoft.com/en-us/windows/update-drivers-through-device-manager-in-windows-ec62f46c-ff14-c91d-eead-d7126dc1f7b6)。保持驱动签名校验开启。
+4. 回到 Flasher 点击“重新读取”。ADB 和 fastboot 是不同接口，进入 fastboot 后可能还需要为新出现的接口安装驱动。若安装任务已失败，按应用提示重新读取并选择“修复”；不要手工刷写分区。
+
+如果设备管理器中插拔前后完全没有新增 USB 设备，先检查供电、USB 连接和直连端口；这与已列出设备但缺少通信驱动的情况不同。完整教程见 [Windows 安装与排查](https://openxplay.org/ufi003-relay#flasher-windows-drivers)。
+
 ## 构建
 
 需要 Go 1.26 或更高版本；macOS 上还需要 Xcode 命令行工具、pkg-config，以及供 `make build` 和测试使用的 libusb（`brew install libusb pkg-config`）；运行界面测试需要 Node.js 22。`make app` 会自行构建适用于 macOS 12 及以上的通用 libusb（只需下载一次），并用 Go 1.26（可在 macOS 12 上运行的最后一个 Go 版本）构建应用。
