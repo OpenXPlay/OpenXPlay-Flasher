@@ -37,6 +37,10 @@ import (
 	"github.com/OpenXPlay/OpenXPlay-Flasher/internal/usb"
 )
 
+// Whole-install fixtures persist and sync journals across every base/layer step.
+// Allow for slower CI disks; these waits check completion, not responsiveness.
+const fixtureInstallWaitTimeout = 30 * time.Second
+
 func testHash(data []byte) string { s := sha256.Sum256(data); return hex.EncodeToString(s[:]) }
 func testJSON(t *testing.T, v any) []byte {
 	t.Helper()
@@ -438,7 +442,7 @@ func TestCatalogEveryLayerAndFullBaseJob(t *testing.T) {
 	if _, err := s.InstallStart(ctx, stage.Request{Choice: "full-reinstall", YesErase: "board1"}); err != nil {
 		t.Fatal(err)
 	}
-	wait, cancel := context.WithTimeout(ctx, 5*time.Second)
+	wait, cancel := context.WithTimeout(ctx, fixtureInstallWaitTimeout)
 	defer cancel()
 	state, err := s.InstallWait(wait)
 	if err != nil || state.Job.Status != "succeeded" || state.Job.Installed.Layers["device"] != "1.0" || state.Job.Installed.Layers["relay"] != "1.0~beta.1" {
@@ -532,7 +536,7 @@ func TestRepairPlusLayersIsOneExplicitJob(t *testing.T) {
 	if _, err = s.InstallStart(ctx, req); err != nil {
 		t.Fatal(err)
 	}
-	wait, cancel := context.WithTimeout(ctx, 5*time.Second)
+	wait, cancel := context.WithTimeout(ctx, fixtureInstallWaitTimeout)
 	defer cancel()
 	state, err := s.InstallWait(wait)
 	if err != nil || state.Job.Status != "succeeded" || !slices.Contains(fb.calls, "flash:partition") || state.Job.Installed.Layers["relay"] != "1.0~beta.1" {
@@ -616,7 +620,7 @@ func TestLayerHandoffRetainsOriginalBoardIdentity(t *testing.T) {
 	if _, err := s.InstallStart(ctx, stage.Request{Choice: "full-reinstall", YesErase: "board1"}); err != nil {
 		t.Fatal(err)
 	}
-	wait, cancel := context.WithTimeout(ctx, 5*time.Second)
+	wait, cancel := context.WithTimeout(ctx, fixtureInstallWaitTimeout)
 	defer cancel()
 	state, err := s.InstallWait(wait)
 	if err != nil || state.Job.Status != "failed" || state.Job.Problem.Code != "serial-mismatch" || d.pushes != 0 || state.Job.Observed {
