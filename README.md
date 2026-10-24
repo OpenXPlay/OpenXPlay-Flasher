@@ -13,8 +13,8 @@ stay up after a change, the previous version is put back.
 > adb. Windows uses native WinUSB for both protocols; an external adb server is not required, and
 > an already-running adb server can still be used. It never downloads packages: Prepare lists each
 > file with its download links, you choose the files you downloaded, and they are checked by SHA-256
-> against the signed package list. Windows fastboot flashing still needs end-to-end hardware
-> validation; reading an OpenStick device's installed-system information has been verified.
+> against the signed package list. On Windows, a complete UFI003 installation from stock firmware
+> and a relay upgrade on an existing OpenStick system have both been verified on hardware.
 
 | Device | Layers |
 | --- | --- |
