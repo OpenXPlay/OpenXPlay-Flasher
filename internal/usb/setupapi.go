@@ -5,6 +5,7 @@
 package usb
 
 import (
+	"hash/fnv"
 	"regexp"
 	"slices"
 	"strconv"
@@ -26,7 +27,7 @@ type winNode struct {
 var (
 	instanceIDPattern = regexp.MustCompile(`(?i)^USB\\VID_([0-9A-F]{4})&PID_([0-9A-F]{4})(?:&MI_([0-9A-F]{2}))?\\`)
 	classPattern      = regexp.MustCompile(`(?i)^USB\\Class_([0-9A-F]{2})&SubClass_([0-9A-F]{2})&Prot_([0-9A-F]{2})$`)
-	locationPattern   = regexp.MustCompile(`(?i)#USBROOT\((\d+)\)((?:#USB\(\d+\))*)(?:#USBMI\(\d+\))?$`)
+	locationPattern   = regexp.MustCompile(`(?i)^(.+#USBROOT\(\d+\))((?:#USB\(\d+\))*)(?:#USBMI\(\d+\))?$`)
 	portPattern       = regexp.MustCompile(`(?i)#USB\((\d+)\)`)
 )
 
@@ -71,15 +72,20 @@ func parseClass(ids []string) (Interface, bool) {
 	return Interface{}, false
 }
 
-// parseLocation turns a location path into a bus (the root hub's index) and the port chain from
-// it; ok is false when no path has the USB form.
+// parseLocation turns a location path into a stable bus identifier and its port chain. USBROOT's
+// index is local to a host controller, so the bus includes the entire prefix through USBROOT.
+// Hashing that prefix, rather than assigning indices during enumeration, keeps a device's location
+// stable across mode changes and when other controllers or devices appear. The positive 31-bit
+// value fits int on every supported architecture. ok is false when no path has the USB form.
 func parseLocation(paths []string) (bus int, ports []int, ok bool) {
 	for _, path := range paths {
 		m := locationPattern.FindStringSubmatch(path)
 		if m == nil {
 			continue
 		}
-		bus, _ = strconv.Atoi(m[1])
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(strings.ToUpper(m[1])))
+		bus = int(h.Sum32() & 0x7fffffff)
 		for _, p := range portPattern.FindAllStringSubmatch(m[2], -1) {
 			n, _ := strconv.Atoi(p[1])
 			ports = append(ports, n)

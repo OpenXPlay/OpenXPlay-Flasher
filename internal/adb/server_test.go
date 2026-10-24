@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"net"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -170,6 +171,86 @@ func TestPickEntry(t *testing.T) {
 	twice := parseDevicesL("0123456789 device transport_id:3\n0123456789 device transport_id:4\n")
 	if _, err := pickEntry(twice, dev); !errors.Is(err, ErrNoDevice) {
 		t.Fatalf("duplicate serial: %v", err)
+	}
+}
+
+func TestPickEntrySerialInventoryNormalization(t *testing.T) {
+	dev := at(0, 9)
+	dev.Serial = "F9816AC0"
+	for _, tc := range []struct {
+		name, list         string
+		windowsID, otherID string
+	}{
+		{"mixed case", "f9816ac0 device transport_id:1\n", "1", ""},
+		{"case variants", "f9816ac0 device transport_id:1\nF9816AC0 device transport_id:2\n", "", "2"},
+		{"case variant with known path", "F9816AC0 device transport_id:1\nf9816ac0 device usb:0-2 transport_id:2\n", "", "1"},
+		{"duplicate exact serial", "F9816AC0 device transport_id:1\nF9816AC0 device transport_id:2\n", "", ""},
+		{"duplicate exact serial with known path", "F9816AC0 device transport_id:1\nF9816AC0 device usb:0-2 transport_id:2\n", "", ""},
+		{"known different path", "F9816AC0 device usb:0-2 transport_id:1\n", "", ""},
+		{"physical path takes precedence", "f9816ac0 device usb:0-9 transport_id:1\nF9816AC0 device transport_id:2\n", "1", "1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wantID := tc.otherID
+			if runtime.GOOS == "windows" {
+				wantID = tc.windowsID
+			}
+			e, err := pickEntry(parseDevicesL(tc.list), dev)
+			if wantID == "" {
+				if !errors.Is(err, ErrNoDevice) {
+					t.Fatalf("ambiguous or unmatched inventory selected %+v: %v", e, err)
+				}
+			} else if err != nil || e.transportID != wantID {
+				t.Fatalf("pickEntry = %+v, %v; want transport %s", e, err, wantID)
+			}
+		})
+	}
+	// ADB protocol serial selectors use the server's actual spelling, even on
+	// Windows; only matching host inventory may ignore case.
+	if n := countSerial(parseDevicesL("f9816ac0 device\nF9816AC0 device\n"), "f9816ac0"); n != 1 {
+		t.Fatalf("case-sensitive protocol count = %d, want 1", n)
+	}
+}
+
+func TestLocateSerialInventoryNormalizationAndUniqueness(t *testing.T) {
+	upper, lower := at(0, 2), at(0, 3)
+	upper.Serial, lower.Serial = "F9816AC0", "f9816ac0"
+	upperOtherPort := at(0, 4)
+	upperOtherPort.Serial = upper.Serial
+	for _, tc := range []struct {
+		name, list, serial     string
+		devices                []usb.DeviceInfo
+		windowsPath, otherPath string
+	}{
+		{"mixed USB inventory case", "f9816ac0 device transport_id:1\n", "f9816ac0", []usb.DeviceInfo{upper}, "0-2", ""},
+		{"mixed designated server case", "f9816ac0 device transport_id:1\n", "F9816AC0", []usb.DeviceInfo{upper}, "0-2", ""},
+		{"exact serial", "F9816AC0 device transport_id:1\n", "F9816AC0", []usb.DeviceInfo{upper}, "0-2", "0-2"},
+		{"duplicate USB serial", "F9816AC0 device transport_id:1\n", "F9816AC0", []usb.DeviceInfo{upper, upperOtherPort}, "", ""},
+		{"USB case variants", "f9816ac0 device transport_id:1\n", "f9816ac0", []usb.DeviceInfo{upper, lower}, "", "0-3"},
+		{"server case variants", "f9816ac0 device transport_id:1\nF9816AC0 device transport_id:2\n", "F9816AC0", []usb.DeviceInfo{upper}, "", "0-2"},
+		{"duplicate server serial", "F9816AC0 device transport_id:1\nF9816AC0 device transport_id:2\n", "F9816AC0", []usb.DeviceInfo{upper}, "", ""},
+		{"path resolves duplicate inventory serial", "f9816ac0 device usb:0-2 transport_id:1\n", "f9816ac0", []usb.DeviceInfo{upper, upperOtherPort}, "0-2", "0-2"},
+		{"duplicate physical location", "f9816ac0 device usb:0-2 transport_id:1\n", "f9816ac0", []usb.DeviceInfo{upper, upper}, "", ""},
+		{"known mismatched path", "F9816AC0 device usb:0-9 transport_id:1\n", "F9816AC0", []usb.DeviceInfo{upper}, "", ""},
+		{"empty designation", "F9816AC0 device transport_id:1\n", "", []usb.DeviceInfo{upper}, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newFakeServer(t, tc.list)
+			wantPath := tc.otherPath
+			if runtime.GOOS == "windows" {
+				wantPath = tc.windowsPath
+			}
+			dev, err := (ServerConnector{Addr: s.addr()}).LocateSerial(context.Background(), tc.serial, tc.devices)
+			if wantPath == "" {
+				if !errors.Is(err, ErrNoDevice) {
+					t.Fatalf("ambiguous or unmatched inventory selected %+v: %v", dev, err)
+				}
+			} else if err != nil || dev.Location() != wantPath {
+				t.Fatalf("LocateSerial = %+v, %v; want %s", dev, err, wantPath)
+			}
+			if log := s.log(); !reflect.DeepEqual(log, []string{"host:devices-l"}) {
+				t.Fatalf("LocateSerial opened a device service: %q", log)
+			}
+		})
 	}
 }
 

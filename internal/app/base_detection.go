@@ -50,7 +50,7 @@ func (s *Service) scanDevices(ctx context.Context, probe bool) device.Snapshot {
 			c.USB.Serial == target.Device.USB.Serial {
 			c.Serialno = target.Device.Serialno
 		}
-		if d, ok := s.designations[c.USB.Location()]; ok && c.Mode == device.ModeADB && c.USB.ID() == d.USB.ID() && (c.USB.Serial == "" || c.USB.Serial == d.Identity.Serial) {
+		if d, ok := s.designations[c.USB.Location()]; ok && c.Mode == device.ModeADB && c.USB.ID() == d.USB.ID() && (c.USB.Serial == "" || c.USB.MatchesSerial(d.Identity.Serial)) {
 			c.Mode = profile.ModeStock
 			c.Profiles = []string{d.Profile}
 			c.Serialno = d.Identity.Serial
@@ -190,7 +190,7 @@ func (s *Service) DesignateStockSerial(ctx context.Context, serial string) (Inst
 	for _, c := range snap.Candidates {
 		if c.Mode == device.ModeADB {
 			devices = append(devices, c.USB)
-			if c.USB.Serial == serial {
+			if c.USB.MatchesSerial(serial) {
 				locations = append(locations, c.USB.Location())
 			}
 		}

@@ -98,8 +98,9 @@ func parseBanner(banner []byte) []string {
 	return splitList(bannerProperties(banner)["features"])
 }
 
-// USBConnector talks to adbd directly over USB, for when no adb server holds the device. Builds
-// without libusb (Windows, no cgo) report usb.ErrTransfersUnsupported.
+// USBConnector talks to adbd directly over USB, for when no adb server holds the device. Windows
+// uses WinUSB without cgo; other platforms use libusb when cgo is enabled. Builds without either
+// backend report usb.ErrTransfersUnsupported.
 type USBConnector struct {
 	// KeyPath is the adb private key (PEM); empty means <user config dir>/OpenXPlay Flasher/adbkey.
 	// It is created on the first device that asks for authentication.

@@ -9,10 +9,12 @@ is usually only the relay. Its Configuration view reads and changes the configur
 connected Linux relay over USB: the device keeps a backup of each version, and if the relay does not
 stay up after a change, the previous version is put back.
 
-> Preview release. It installs every layer: the base system with fastboot (macOS only for now) and
-> device support and the relay over adb (on Windows only through an adb server that is already
-> running). It never downloads packages: Prepare lists each file with its download links, you choose
-> the files you downloaded, and they are checked by SHA-256 against the signed package list.
+> Preview release. It installs the base system with fastboot, and device support and the relay over
+> adb. Windows uses native WinUSB for both protocols; an external adb server is not required, and
+> an already-running adb server can still be used. It never downloads packages: Prepare lists each
+> file with its download links, you choose the files you downloaded, and they are checked by SHA-256
+> against the signed package list. Windows fastboot flashing still needs end-to-end hardware
+> validation; reading an OpenStick device's installed-system information has been verified.
 
 | Device | Layers |
 | --- | --- |
@@ -39,6 +41,16 @@ Applications, then open it once.
 "Windows protected your PC" appears, choose **More info**, then **Run anyway**. If the app reports
 that the Microsoft Edge WebView2 Runtime is missing, install it and start the app again.
 
+Windows lists attached USB devices through SetupAPI, which does not require an adb driver. Native
+adb and fastboot communication requires the matching device interface to use the **WinUSB** driver.
+If a listed device cannot be opened, the error identifies the interface and explains that its driver
+must be checked. In Device Manager, check the driver for the **ADB interface** or, after entering
+the bootloader, the **fastboot interface**. Install a compatible WinUSB driver for that interface;
+the driver may need to be installed separately for each mode. On a composite OpenStick device,
+keep the **RNDIS network adapter** and its network driver intact: change only the adb or fastboot
+interface, never the whole composite device. An already-running adb server that can access the
+device remains another supported connection path.
+
 ## Build
 
 Requirements: Go 1.26 or later; on macOS the Xcode command line tools, pkg-config and, for
@@ -49,7 +61,7 @@ Go 1.26, the last Go that runs on macOS 12.
 ```bash
 make app        # macOS: dist/OpenXPlay Flasher.app (universal; SIGN_IDENTITY=... to sign)
 make dmg        # macOS: the disk image; make notarize submits it to Apple
-make windows    # Windows exes in dist/ (cross-built without cgo; lists USB devices through SetupAPI)
+make windows    # Windows exes in dist/ (without cgo; SetupAPI listing, WinUSB adb/fastboot)
 make test       # Go, UI and cross-platform checks
 make dev        # run the app with the page read from internal/gui/assets
 make web        # serve the page to a browser on this computer, for UI work

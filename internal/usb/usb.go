@@ -9,6 +9,7 @@ package usb
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 )
 
@@ -58,6 +59,15 @@ func (d DeviceInfo) HasInterface(want Interface) bool {
 		}
 	}
 	return false
+}
+
+// MatchesSerial matches a host inventory serial. Windows PnP instance IDs are case insensitive
+// and may uppercase the USB string; the protocol must still verify the actual serial exactly.
+func (d DeviceInfo) MatchesSerial(serial string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(d.Serial, serial)
+	}
+	return d.Serial == serial
 }
 
 // Bus lists the devices currently attached to the host.

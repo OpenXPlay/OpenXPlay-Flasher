@@ -128,11 +128,11 @@ func pickEntry(entries []serverEntry, dev usb.DeviceInfo) (serverEntry, error) {
 			match = append(match, e)
 		}
 	}
-	if len(match) == 0 && dev.Serial != "" && countSerial(entries, dev.Serial) == 1 {
-		for _, e := range entries {
-			if e.serial == dev.Serial && e.usb == "" {
-				match = append(match, e)
-			}
+	if len(match) == 0 && dev.Serial != "" {
+		// A duplicate with a known path is still ambiguous: it must not make
+		// a pathless entry look like the only device with this serial.
+		if e, unique := uniqueInventorySerial(entries, dev); unique && e.usb == "" {
+			match = append(match, e)
 		}
 	}
 	switch len(match) {
@@ -142,6 +142,26 @@ func pickEntry(entries []serverEntry, dev usb.DeviceInfo) (serverEntry, error) {
 		return match[0], nil
 	}
 	return serverEntry{}, fmt.Errorf("adb: the adb server lists %d devices at %s", len(match), dev.Location())
+}
+
+// Inventory matching accounts for Windows PnP serial normalization. Protocol
+// selectors and the serial returned by the connected device remain case sensitive.
+func uniqueInventorySerial(entries []serverEntry, dev usb.DeviceInfo) (serverEntry, bool) {
+	if dev.Serial == "" {
+		return serverEntry{}, false
+	}
+	var match serverEntry
+	found := false
+	for _, e := range entries {
+		if !dev.MatchesSerial(e.serial) {
+			continue
+		}
+		if found {
+			return serverEntry{}, false
+		}
+		match, found = e, true
+	}
+	return match, found
 }
 
 func countSerial(entries []serverEntry, serial string) int {
@@ -288,17 +308,22 @@ func (s ServerConnector) LocateSerial(ctx context.Context, serial string, device
 	if err != nil {
 		return usb.DeviceInfo{}, err
 	}
-	if countSerial(entries, serial) != 1 {
+	e, unique := uniqueInventorySerial(entries, usb.DeviceInfo{Serial: serial})
+	if !unique {
 		return usb.DeviceInfo{}, ErrNoDevice
 	}
-	for _, e := range entries {
-		if e.serial == serial {
-			for _, dev := range devices {
-				if e.usb == dev.Location() || e.usb == "" && dev.Serial == serial {
-					return dev, nil
-				}
+	var match usb.DeviceInfo
+	found := false
+	for _, dev := range devices {
+		if e.usb != "" && e.usb == dev.Location() || e.usb == "" && dev.MatchesSerial(e.serial) {
+			if found {
+				return usb.DeviceInfo{}, ErrNoDevice
 			}
+			match, found = dev, true
 		}
+	}
+	if found {
+		return match, nil
 	}
 	return usb.DeviceInfo{}, ErrNoDevice
 }

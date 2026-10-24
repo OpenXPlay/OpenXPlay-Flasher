@@ -3,8 +3,8 @@
 # Created by riko chen on 2026-10-20
 
 # The desktop app needs cgo on macOS (Wails' WebKit window and libusb through gousb) and builds
-# without cgo on Windows (Wails' WebView2 needs none; USB access there comes with a pure-Go WinUSB
-# backend later). -tags nogui leaves Wails out for the command-line build.
+# without cgo on Windows (Wails' WebView2 needs none; USB listing uses SetupAPI and native adb and
+# fastboot transfers use WinUSB). -tags nogui leaves Wails out for the command-line build.
 
 BIN       := openxplay-flasher
 APP       := OpenXPlay Flasher.app

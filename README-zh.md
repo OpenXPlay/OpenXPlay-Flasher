@@ -4,7 +4,7 @@
 
 一款 Windows 和 macOS 桌面应用，用于在受支持的设备上安装 OpenXPlay 中继并保持更新。每台设备的系统由若干层叠加而成（例如基础系统、设备支持、中继）。刷机工具既可以从头刷写全部各层，也可以单独更新某一层；通常只需要更新中继这一层。“配置”页面可以通过 USB 读取和修改已连接的 Linux 中继的配置文件：设备会保留每个版本的备份，如果修改后中继无法正常运行，会自动恢复之前的版本。
 
-> 预览版。可以安装全部各层：用 fastboot 刷写基础系统（目前仅限 macOS），通过 adb 安装设备支持层和中继（Windows 版需要电脑上已在运行 adb 服务）。刷机工具不会自动下载安装包：“准备”页面列出每个文件和下载链接，请自行下载后选择文件，刷机工具会按签名软件包列表中的 SHA-256 核对。
+> 预览版。用 fastboot 刷写基础系统，通过 adb 安装设备支持层和中继。Windows 原生通过 WinUSB 支持这两种协议，无需外部 adb 服务，也可以继续使用电脑上已在运行的 adb 服务。刷机工具不会自动下载安装包：“准备”页面列出每个文件和下载链接，请自行下载后选择文件，刷机工具会按签名软件包列表中的 SHA-256 核对。目前已在 Windows 真机上验证读取 OpenStick 的已安装系统信息，fastboot 完整刷机流程仍待真机验证。
 
 | 设备 | 分层 |
 | --- | --- |
@@ -25,6 +25,8 @@
 
 **Windows 10 或 11**（`openxplay-flasher-windows-amd64.exe`；Arm 电脑使用 `-arm64.exe`）：出现“Windows 已保护你的电脑”时，选择**更多信息**，再选择**仍要运行**。如果应用提示缺少 Microsoft Edge WebView2 运行时，请安装后重新打开应用。
 
+Windows 通过 SetupAPI 列出已连接的 USB 设备，扫描不依赖 adb 驱动。原生 adb 和 fastboot 通信则要求对应的设备接口使用 **WinUSB** 驱动。设备已列出但无法打开时，错误信息会指出接口并提示检查驱动。请在“设备管理器”中检查 **ADB 接口**，或进入引导加载程序后检查 **fastboot 接口**，为该接口安装兼容的 WinUSB 驱动；这两种模式可能需要分别安装驱动。对于包含多个接口的 OpenStick 设备，请保留 **RNDIS 网卡**及其网络驱动，只调整 adb 或 fastboot 接口，不要替换整个复合设备的驱动。若已运行的 adb 服务能访问设备，也可以继续通过它连接。
+
 ## 构建
 
 需要 Go 1.26 或更高版本；macOS 上还需要 Xcode 命令行工具、pkg-config，以及供 `make build` 和测试使用的 libusb（`brew install libusb pkg-config`）；运行界面测试需要 Node.js 22。`make app` 会自行构建适用于 macOS 12 及以上的通用 libusb（只需下载一次），并用 Go 1.26（可在 macOS 12 上运行的最后一个 Go 版本）构建应用。
@@ -32,7 +34,7 @@
 ```bash
 make app        # macOS：dist/OpenXPlay Flasher.app（通用二进制；设置 SIGN_IDENTITY=... 可签名）
 make dmg        # macOS：生成磁盘映像；make notarize 提交 Apple 公证
-make windows    # 在 dist/ 中生成 Windows exe（交叉编译，不使用 cgo；通过 SetupAPI 列出 USB 设备）
+make windows    # 在 dist/ 中生成 Windows exe（不使用 cgo；SetupAPI 扫描、WinUSB adb/fastboot）
 make test       # Go、界面和跨平台检查
 make dev        # 运行应用，页面直接读取 internal/gui/assets
 make web        # 在本机浏览器中打开页面，便于开发界面

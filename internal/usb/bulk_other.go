@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Created by riko chen on 2026-10-21
 
-//go:build !cgo || windows
+//go:build !cgo && !windows
 
 package usb
 
 import "context"
 
-// OpenBulk reports ErrTransfersUnsupported: builds without libusb (Windows, and macOS or Linux
-// without cgo) have no transfer backend yet.
+// OpenBulk reports ErrTransfersUnsupported for macOS or Linux builds without libusb.
 func OpenBulk(context.Context, DeviceInfo, Interface) (Bulk, error) {
 	return nil, ErrTransfersUnsupported
 }
