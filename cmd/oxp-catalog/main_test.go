@@ -215,3 +215,41 @@ func TestCommandErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestCommittedCatalogBuildsWithoutLocalFilesOrDownloads(t *testing.T) {
+	path := filepath.Join("..", "..", "catalog", "beta.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source sourceIndex
+	if err := catalog.DecodeStrict(b, &source); err != nil {
+		t.Fatal(err)
+	}
+	for id, device := range source.Devices {
+		for _, layer := range device.Layers {
+			for _, artifact := range layer.Artifacts {
+				if artifact.File != "" {
+					t.Fatalf("%s/%s/%s depends on a maintainer's local file", id, layer.Layer, artifact.Name)
+				}
+			}
+		}
+	}
+	// No client is supplied: complete, committed metadata must build without network access.
+	if _, err := build(context.Background(), path, "", false, nil, time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMalformedStdinSecretDoesNotDiscloseItsContents(t *testing.T) {
+	secret := "invalid-key-content-that-must-stay-private"
+	var output bytes.Buffer
+	err := run(context.Background(), []string{"sign", "--secret", "-", "--index", filepath.Join(t.TempDir(), "index.json")},
+		strings.NewReader(secret), &output, nil)
+	if err == nil {
+		t.Fatal("malformed key accepted")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(output.String(), secret) {
+		t.Fatal("key contents disclosed")
+	}
+}

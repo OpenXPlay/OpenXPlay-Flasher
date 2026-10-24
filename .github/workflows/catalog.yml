@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: 2026 OpenXPlay.org
+# SPDX-License-Identifier: AGPL-3.0-only
+# Created by riko chen on 2026-10-24
+
+name: Sign catalog
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-sign-beta
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sign:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: catalog
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build the reviewed signing tool
+        run: go build -trimpath -o "$RUNNER_TEMP/oxp-catalog" ./cmd/oxp-catalog
+      - name: Verify the published catalog and build its successor
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/catalog-previous"
+          for file in index.json index.json.minisig; do
+            curl --fail --location --silent --show-error --retry 3 \
+              --proto '=https' --proto-redir '=https' --connect-timeout 20 --max-time 120 \
+              --max-filesize 1048576 --output "$RUNNER_TEMP/catalog-previous/$file" \
+              "https://openxplay.org/flasher/beta/$file"
+          done
+          "$RUNNER_TEMP/oxp-catalog" verify --index "$RUNNER_TEMP/catalog-previous/index.json"
+          "$RUNNER_TEMP/oxp-catalog" build --source catalog/beta.json \
+            --previous "$RUNNER_TEMP/catalog-previous/index.json" --out "$RUNNER_TEMP/catalog-signed"
+      - name: Sign without writing the key
+        env:
+          CATALOG_SIGNING_KEY: ${{ secrets.CATALOG_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CATALOG_SIGNING_KEY:-}" ]; then
+            echo '::error::The catalog environment secret CATALOG_SIGNING_KEY is missing or empty.'
+            exit 1
+          fi
+          if ! printf '%s' "$CATALOG_SIGNING_KEY" | env -u CATALOG_SIGNING_KEY \
+            "$RUNNER_TEMP/oxp-catalog" sign --secret - --index "$RUNNER_TEMP/catalog-signed/index.json"; then
+            echo '::error::Signing failed. CATALOG_SIGNING_KEY must contain the original two-line unencrypted oxp-catalog secret key text; encrypted minisign keys are unsupported.'
+            exit 1
+          fi
+      - name: Verify against the Flasher trust root
+        run: '"$RUNNER_TEMP/oxp-catalog" verify --index "$RUNNER_TEMP/catalog-signed/index.json"'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: catalog-beta-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/catalog-signed/index.json
+            ${{ runner.temp }}/catalog-signed/index.json.minisig
+          if-no-files-found: error
+          retention-days: 7
