@@ -85,8 +85,9 @@ make web        # serve the page to a browser on this computer, for UI work
 
 ## Contributing
 
-Contributions are accepted under the [Contributor License Agreement](./CLA.md). The CLA Assistant
-check on each pull request records your acceptance.
+Contributions are accepted under the [OpenXPlay Contributor License Agreement](https://github.com/OpenXPlay/OpenXPlay/blob/main/CLA.md). Accept it
+once by replying on a pull request to any OpenXPlay repository; the CLA check then passes in all of
+them.
 
 ## License
 
