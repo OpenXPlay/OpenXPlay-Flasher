@@ -10,7 +10,7 @@ import "github.com/OpenXPlay/OpenXPlay-Flasher/internal/version"
 var helpLinks = map[string]Links{
 	LangEnglish: {
 		Website:   "https://openxplay.org/en/",
-		PhicommN1: "https://openxplay.org/en/phicomm-n1",
+		PhicommN1: "https://openxplay.org/en/linux-devices#phicomm-n1",
 		Tutorial:  "https://openxplay.org/en/ufi003-relay#flasher",
 		Download:  "https://openxplay.org/en/ufi003-relay#flasher-download",
 		Manual:    "https://openxplay.org/en/ufi003-flash",
@@ -19,7 +19,7 @@ var helpLinks = map[string]Links{
 	},
 	LangChinese: {
 		Website:   "https://openxplay.org/",
-		PhicommN1: "https://openxplay.org/phicomm-n1",
+		PhicommN1: "https://openxplay.org/linux-devices#phicomm-n1",
 		Tutorial:  "https://openxplay.org/ufi003-relay#flasher",
 		Download:  "https://openxplay.org/ufi003-relay#flasher-download",
 		Manual:    "https://openxplay.org/ufi003-flash",
