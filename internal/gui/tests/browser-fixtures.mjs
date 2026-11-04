@@ -144,7 +144,7 @@ const server = createServer(async (req, res) => {
   data.settings ||= { lang: language, verifyPackageListSignature: data.state.catalog.signatureCheck !== false };
   const json = (value, status = 200) => { res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(value)); };
   if (url.pathname === "/boot.js") {
-    const links = Object.fromEntries(["en", "zh-CN"].map((l) => [l, { phicommN1:"https://openxplay.org/"+(l==="en"?"en/":"")+"phicomm-n1", manual: "https://openxplay.org/"+(l === "en" ? "en/" : "")+"ufi003-flash", tutorial: "https://openxplay.org/ufi003-relay#flasher", download:"https://openxplay.org/ufi003-relay#flasher-download", source: "https://github.com/OpenXPlay/OpenXPlay-Flasher" }]));
+    const links = Object.fromEntries(["en", "zh-CN"].map((l) => [l, { phicommN1:"https://openxplay.org/"+(l==="en"?"":"zh/")+"phicomm-n1", manual: "https://openxplay.org/"+(l === "en" ? "" : "zh/")+"ufi003-flash", tutorial: "https://openxplay.org/"+(l === "en" ? "" : "zh/")+"ufi003-relay#flasher", download:"https://openxplay.org/"+(l === "en" ? "" : "zh/")+"ufi003-relay#flasher-download", source: "https://github.com/OpenXPlay/OpenXPlay-Flasher" }]));
     res.setHeader("Content-Type", "text/javascript"); res.end("window.bootPrefs="+JSON.stringify({ lang: language, systemLang: language, saved: language, verifyPackageListSignature: data.settings.verifyPackageListSignature, web: scene !== "n1-key-picker", platform: "darwin", links })+";"); return;
   }
   if (url.pathname === "/api/state") {

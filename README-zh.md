@@ -36,7 +36,7 @@ Windows 通过 SetupAPI 列出已连接的 USB 设备，扫描不依赖 adb 驱�
 3. 右键该接口，选择“更新驱动程序 → 浏览我的电脑以查找驱动程序”，选择解压目录并完成安装。Windows 的手动安装步骤见 [Microsoft 说明](https://support.microsoft.com/en-us/windows/update-drivers-through-device-manager-in-windows-ec62f46c-ff14-c91d-eead-d7126dc1f7b6)。保持驱动签名校验开启。
 4. 回到 Flasher 点击“重新读取”。ADB 和 fastboot 是不同接口，进入 fastboot 后可能还需要为新出现的接口安装驱动。若安装任务已失败，按应用提示重新读取并选择“修复”；不要手工刷写分区。
 
-如果设备管理器中插拔前后完全没有新增 USB 设备，先检查供电、USB 连接和直连端口；这与已列出设备但缺少通信驱动的情况不同。完整教程见 [Windows 安装与排查](https://openxplay.org/ufi003-relay#flasher-windows-drivers)。
+如果设备管理器中插拔前后完全没有新增 USB 设备，先检查供电、USB 连接和直连端口；这与已列出设备但缺少通信驱动的情况不同。完整教程见 [Windows 安装与排查](https://openxplay.org/zh/ufi003-relay#flasher-windows-drivers)。
 
 ## 构建
 

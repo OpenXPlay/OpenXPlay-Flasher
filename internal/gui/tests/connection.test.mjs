@@ -24,7 +24,7 @@ for(const language of ["en","zh-CN"])test("device type, network form and host-ke
   return {ok:!data.code,status:data.code?409:200,json:async()=>data};
  };
  const render=()=>page.renderConnection({root,chooser,profiles});
- await page.initConnection({web:true,links:{[language]:{phicommN1:"https://openxplay.org/phicomm-n1"}}},render,(s)=>{result=s;});
+ await page.initConnection({web:true,links:{[language]:{phicommN1:"https://openxplay.org/"+(language==="en"?"":"zh/")+"phicomm-n1"}}},render,(s)=>{result=s;});
  assert.equal(walk(chooser).filter((n)=>n.tag==="button").length,2);
  assert.match(root.textContent,new RegExp(t("Choose a device type to begin.").replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));
  await document.getElementById("device-type-phicomm-n1").click();

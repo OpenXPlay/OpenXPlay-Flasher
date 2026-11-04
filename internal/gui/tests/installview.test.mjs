@@ -55,7 +55,7 @@ function ready(s) {
   }
   return s;
 }
-const boot = { web: true, links: { en: { manual: "https://openxplay.org/en/ufi003-flash" }, "zh-CN": { manual: "https://openxplay.org/ufi003-flash" } } };
+const boot = { web: true, links: { en: { manual: "https://openxplay.org/ufi003-flash" }, "zh-CN": { manual: "https://openxplay.org/zh/ufi003-flash" } } };
 
 for (const language of ["en", "zh-CN"]) test("Connect offers existing relay identity, replacement and admin in " + language, async () => {
   const d = dom(); setLang(language);
@@ -81,7 +81,7 @@ for (const language of ["en", "zh-CN"]) test("Connect offers existing relay iden
     assert.equal(d.get("admin-open").tag, mode === "ssh" ? "a" : "button");
     const link = d.nodes().find((n) => n.tag === "a" && n.textContent === t("Continue with network setup"));
     assert.ok(link);
-    if (mode === "adb") assert.equal(link.href, "https://openxplay.org/" + (language === "en" ? "en/" : "") + "ufi003-relay#step-network");
+    if (mode === "adb") assert.equal(link.href, "https://openxplay.org/" + (language === "en" ? "" : "zh/") + "ufi003-relay#step-network");
     d.get("identity-path").listeners.input[0]({ target: { value: "/fake/identity.zip" } });
     await d.get("identity-pick").click();
     assert.deepEqual(calls.at(-1), { url: "/api/identity/import", body: { paths: ["/fake/identity.zip"] } });
@@ -384,7 +384,7 @@ for (const language of ["en", "zh-CN"]) test("signature notice persists through 
 for (const language of ["en", "zh-CN"]) test("N1 read-only Armbian, device/relay choices and direct admin link in " + language, async () => {
   const d=dom();setLang(language);
   const saved=globalThis.setInterval;globalThis.setInterval=()=>0;
-  const page=await import("../assets/install.js?n1-"+language);page.init({...boot,links:{[language]:{phicommN1:"https://openxplay.org/phicomm-n1"}}});globalThis.setInterval=saved;
+  const page=await import("../assets/install.js?n1-"+language);page.init({...boot,links:{[language]:{phicommN1:"https://openxplay.org/"+(language==="en"?"":"zh/")+"phicomm-n1"}}});globalThis.setInterval=saved;
   const s=snapshot();s.target={profile:"phicomm-n1",device:{mode:"ssh",connection:"network",host:"n1.test",serialno:"021122334455"}};
   s.layers[0]={...s.layers[0],readOnly:true,guide:"phicommN1",name:{en:"Armbian","zh-CN":"Armbian"},prettyName:"Debian GNU/Linux 13 (trixie)",kernelRelease:"6.12.112-ophub"};
   page.reset(s);await d.get("install-continue").click();
