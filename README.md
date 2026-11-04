@@ -63,7 +63,7 @@ may remain in English. The app does not download or install drivers and has no o
 3. Right-click that interface, choose Update driver → Browse my computer for drivers, and select the extracted folder. See [Microsoft's manual installation instructions](https://support.microsoft.com/en-us/windows/update-drivers-through-device-manager-in-windows-ec62f46c-ff14-c91d-eead-d7126dc1f7b6). Keep driver signature enforcement enabled.
 4. Return to Flasher and choose Read again. ADB and fastboot are separate interfaces, so the newly appearing fastboot interface may need another driver installation. If an install job has failed, follow the app's instructions to read the device again and choose Repair; do not flash partitions manually.
 
-If plugging the dongle in adds no USB device in Device Manager, check power, the USB connection and a direct USB port first. This differs from a listed device whose communication driver is missing. See the [Windows installation and troubleshooting guide](https://openxplay.org/en/ufi003-relay#flasher-windows-drivers).
+If plugging the dongle in adds no USB device in Device Manager, check power, the USB connection and a direct USB port first. This differs from a listed device whose communication driver is missing. See the [Windows installation and troubleshooting guide](https://openxplay.org/ufi003-relay#flasher-windows-drivers).
 
 ## Build
 

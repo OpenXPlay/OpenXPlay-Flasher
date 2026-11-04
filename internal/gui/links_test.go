@@ -13,8 +13,8 @@ import (
 
 func TestHelpLinksInBothLanguagesAreOpenable(t *testing.T) {
 	want := map[string][3]string{
-		LangEnglish: {"https://openxplay.org/en/ufi003-relay#flasher", "https://openxplay.org/en/ufi003-relay#flasher-download", "https://openxplay.org/en/ufi003-flash"},
-		LangChinese: {"https://openxplay.org/ufi003-relay#flasher", "https://openxplay.org/ufi003-relay#flasher-download", "https://openxplay.org/ufi003-flash"},
+		LangEnglish: {"https://openxplay.org/ufi003-relay#flasher", "https://openxplay.org/ufi003-relay#flasher-download", "https://openxplay.org/ufi003-flash"},
+		LangChinese: {"https://openxplay.org/zh/ufi003-relay#flasher", "https://openxplay.org/zh/ufi003-relay#flasher-download", "https://openxplay.org/zh/ufi003-flash"},
 	}
 	if len(helpLinks) != len(want) {
 		t.Fatalf("help link languages = %v", helpLinks)

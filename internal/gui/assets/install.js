@@ -586,7 +586,7 @@ function nextStepsCard() {
   if (!next.relay) return el("section", { class: "next-steps", "aria-label": t("Next steps") }, [...parts,
     el("p", {}, t("Install the remaining layers to start the relay.")),
     el("button", { type: "button", disabled: view.busy, onclick: backToLayers }, t("Back to layers")),
-    el("a", { href: view.state?.target?.profile === "phicomm-n1" ? linksFor(view.boot.links,lang()).phicommN1 : lang() === "zh-CN" ? "https://openxplay.org/ufi003-relay#step-network" : "https://openxplay.org/en/ufi003-relay#step-network", "data-open": "" }, t("Continue with network setup")),
+    el("a", { href: view.state?.target?.profile === "phicomm-n1" ? linksFor(view.boot.links,lang()).phicommN1 : lang() === "zh-CN" ? "https://openxplay.org/zh/ufi003-relay#step-network" : "https://openxplay.org/ufi003-relay#step-network", "data-open": "" }, t("Continue with network setup")),
   ]);
   if (next.identity === "present") parts.push(el("div", { class: "identity-success result ok", role: "status" }, [
     el("strong", {}, t("Identity added")), el("p", {}, t("Files: {files}", { files: "identity.pk8 · certificate.p7b" })),
@@ -622,7 +622,7 @@ function nextStepsCard() {
       render();
     } }, t("Close USB admin connection")));
   if (view.nextError) parts.push(el("p", { class: "error-box", role: "alert" }, problemText(t, view.nextError)));
-  parts.push(el("a", { href: view.state?.target?.profile === "phicomm-n1" ? linksFor(view.boot.links,lang()).phicommN1 : lang() === "zh-CN" ? "https://openxplay.org/ufi003-relay#step-network" : "https://openxplay.org/en/ufi003-relay#step-network", "data-open": "" }, t("Continue with network setup")));
+  parts.push(el("a", { href: view.state?.target?.profile === "phicomm-n1" ? linksFor(view.boot.links,lang()).phicommN1 : lang() === "zh-CN" ? "https://openxplay.org/zh/ufi003-relay#step-network" : "https://openxplay.org/ufi003-relay#step-network", "data-open": "" }, t("Continue with network setup")));
   return el("section", { class: "next-steps", "aria-label": t("Next steps") }, parts);
 }
 
